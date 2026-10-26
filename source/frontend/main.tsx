@@ -11,7 +11,7 @@ function App(){
   const [path,setPath]=useState(route());
   useEffect(()=>{const change=()=>setPath(route());window.addEventListener('hashchange',change);return()=>window.removeEventListener('hashchange',change);},[]);
   if(path==='/admin'||path.startsWith('/admin/'))return <Admin/>;
-  return <Visitor page={path==='/ticket'?'ticket':'home'}/>;
+  return <Visitor page={path==='/ticket'||path.startsWith('/t/')?'ticket':'home'}/>;
 }
 
 createRoot(document.getElementById('root')!).render(<App/>);

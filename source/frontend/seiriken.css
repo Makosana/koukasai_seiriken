@@ -115,6 +115,10 @@
 .live-dot{width:10px;height:10px;border-radius:50%;background:var(--tone);animation:pulse 1s ease-in-out infinite}
 .ticket-state{margin-top:14px;font-size:14px;font-weight:600;color:#8b919a;background:#f1f2f4;border-radius:10px;padding:10px}
 .ticket-foot{border-top:1px dashed #e2e4e8;padding:12px 18px;text-align:center;font-size:12px;color:#9aa0a9}
+.ticket-link .text-link{display:inline-flex;align-items:center;gap:6px;font-size:13px}
+.link-box{width:100%;font-size:12px;font-family:ui-monospace,Consolas,monospace;border:1px solid #dce1e8;border-radius:8px;padding:9px 10px;background:#f7f8fa;color:#4a5260;margin-top:4px}
+.link-warning{display:flex;align-items:flex-start;gap:6px;font-size:12px;color:#b4541a;text-align:left;margin:10px 0 0;line-height:1.6}
+.link-warning svg{flex:none;margin-top:3px}
 .danger-link{color:#b0533d!important;font-size:13px!important}
 .ticket-shine{position:absolute;inset:0;pointer-events:none;background:linear-gradient(105deg,transparent 40%,#ffffff70 50%,transparent 60%);background-size:250% 100%;animation:shine 3.2s linear infinite}
 @keyframes shine{from{background-position:150% 0}to{background-position:-100% 0}}

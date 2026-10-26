@@ -1,5 +1,5 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
-import {Ticket as TicketIcon,Clock3,Users,ChevronRight,RefreshCw,TriangleAlert,ArrowLeft,Minus,Plus,Info,CheckCircle2} from 'lucide-react';
+import {Ticket as TicketIcon,Clock3,Users,ChevronRight,RefreshCw,TriangleAlert,ArrowLeft,Minus,Plus,Info,CheckCircle2,Link2,Copy,Share2} from 'lucide-react';
 import {ApiError,newId,scope,clockSeconds,dateLabel} from './lib/api';
 import {backend,MODE,type Saved} from './lib/backend';
 import type {Children,PublicRound,PublicState,Ticket} from './lib/types';
@@ -16,6 +16,21 @@ function savedName(){try{return localStorage.getItem(NAME_KEY)??'';}catch{return
 function deviceId(){let id=localStorage.getItem(DEVICE_KEY);if(!id){id=newId();localStorage.setItem(DEVICE_KEY,id);}return id;}
 export const tone=(roundId:number)=>`tone-${roundId%6}`;
 const byStart=(a:Ticket,b:Ticket)=>a.starts_at.localeCompare(b.starts_at)||a.number-b.number;
+const LINK=/^#\/t\/([0-9a-fA-F-]{36})\/([A-Za-z0-9_-]{16,128})$/;
+const ticketLink=(t:Ticket)=>`${location.origin}${location.pathname}#/t/${t.id}/${t.token}`;
+const cachedTickets=(list:Saved[])=>list.map(s=>s.ticket).filter((t):t is Ticket=>!!t).sort(byStart);
+function validSaved(s:Saved|null){
+  if(typeof s?.id!=='string'||typeof s?.token!=='string')return null;
+  const t=s.ticket;
+  const ok=t&&typeof t==='object'&&t.id===s.id&&typeof t.number==='number'&&typeof t.starts_at==='string'&&typeof t.round_label==='string';
+  return {id:s.id,token:s.token,...(ok?{ticket:t}:{})};
+}
+function takeLink(list:Saved[]):{list:Saved[];id:string|null}{
+  const m=LINK.exec(location.hash);if(!m)return {list,id:null};
+  const id=m[1].toLowerCase();
+  history.replaceState(null,'',location.pathname+location.search+'#/ticket');
+  return {list:list.some(s=>s.id===id)?list:[...list,{id,token:m[2]}],id};
+}
 const sameParty=(p:Pending,f:Form)=>p.roundId===f.round.id&&p.guardians===f.guardians&&p.name===f.name&&CHILD_KINDS.every(k=>p.children[k.key]===f.children[k.key]);
 export function partyText(t:Ticket){
   const kids=t.children&&childTotal(t.children)?`子ども ${t.party_size}名（${childSummary(t.children)}）`:`${t.party_size}名`;
@@ -39,7 +54,8 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
   const [connection,setConnection]=useState<'loading'|'ok'|'error'>('loading');
   const [storageError,setStorageError]=useState(false);
   const [form,setForm]=useState<Form|null>(null);
-  const [cancelTarget,setCancelTarget]=useState<Ticket|null>(null);
+  const [cancelTarget,setCancelTarget]=useState<Ticket|null>(null),[linkTarget,setLinkTarget]=useState<Ticket|null>(null);
+  const [checked,setChecked]=useState<'pending'|'ok'|'failed'>('pending');
   const [pending,setPending]=useState<Pending|null>(null);
   const [busy,setBusy]=useState(false),[issuing,setIssuing]=useState(false),[highlight,setHighlight]=useState<string|null>(null);
   const [toast,setToast]=useState<{text:string;error?:boolean}|null>(null);
@@ -53,19 +69,24 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
     catch{setConnection('error');}
   },[]);
   const refreshTickets=useCallback(async(list=savedRef.current)=>{
-    if(!list.length){setTickets([]);return;}
+    if(!list.length){setTickets([]);setChecked('ok');return;}
     try{
-      const r=await (await backend()).lookup(list);
-      const found=r.tickets.filter((t):t is Ticket=>!!t);
-      setTickets(found.sort(byStart));
-      if(found.length!==list.length)persist(list.filter((_,i)=>r.tickets[i]));
-    }catch{setConnection('error');}
+      const r=await (await backend()).lookup(list.map(({id,token})=>({id,token})));
+      const result=new Map(list.map((s,i)=>[s.id,r.tickets[i]??null]));
+      const next=savedRef.current.flatMap(s=>{
+        if(!result.has(s.id))return [s];
+        const t=result.get(s.id);
+        return t?[{id:s.id,token:t.token??s.token,ticket:t}]:[];
+      });
+      persist(next);setTickets(cachedTickets(next));setChecked('ok');
+    }catch{setConnection('error');setChecked('failed');}
   },[persist]);
 
   function addTicket(t:Ticket){
-    if(!t.token)return;
-    persist([...savedRef.current.filter(s=>s.id!==t.id),{id:t.id,token:t.token}]);
-    setTickets(v=>[...v.filter(x=>x.id!==t.id),t].sort(byStart));
+    const token=t.token??savedRef.current.find(s=>s.id===t.id)?.token;
+    if(!token)return;
+    const next=[...savedRef.current.filter(s=>s.id!==t.id),{id:t.id,token,ticket:{...t,token}}];
+    persist(next);setTickets(cachedTickets(next));
   }
   function savePending(p:Pending|null){
     setPending(p);
@@ -76,18 +97,23 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
     let list:Saved[]=[],p:Pending|null=null;
     try{
       deviceId();
-      list=load<Saved[]>(TICKETS_KEY,[]).filter(s=>typeof s?.id==='string'&&typeof s?.token==='string');
+      const raw=load<Saved[]>(TICKETS_KEY,[]);
+      list=(Array.isArray(raw)?raw:[]).map(validSaved).filter((s):s is Saved=>!!s);
       p=load<Pending|null>(PENDING_KEY,null);
     }catch{setStorageError(true);}
-    savedRef.current=list;setSaved(list);
+    const linked=takeLink(list);
+    list=linked.list;
+    if(linked.id){setHighlight(linked.id);try{localStorage.setItem(TICKETS_KEY,JSON.stringify(list));}catch{setStorageError(true);}}
+    savedRef.current=list;setSaved(list);setTickets(cachedTickets(list));
     if(p?.requestId&&p.children&&typeof p.name==='string')setPending(p);else if(p){try{localStorage.removeItem(PENDING_KEY);}catch{}}
     refreshRounds();refreshTickets(list);
     const poll=setInterval(()=>{if(document.visibilityState==='visible'&&!busyRef.current){refreshRounds();refreshTickets();}},10000);
     const tick=setInterval(()=>setNow(Date.now()),1000);
     const visible=()=>{if(document.visibilityState==='visible'){refreshRounds();refreshTickets();}};
-    document.addEventListener('visibilitychange',visible);
-    return()=>{clearInterval(poll);clearInterval(tick);document.removeEventListener('visibilitychange',visible);if(toastTimer.current)clearTimeout(toastTimer.current);};
-  },[refreshRounds,refreshTickets]);
+    const hash=()=>{const l=takeLink(savedRef.current);if(l.id){persist(l.list);setTickets(cachedTickets(l.list));setHighlight(l.id);refreshTickets(l.list);}};
+    document.addEventListener('visibilitychange',visible);window.addEventListener('hashchange',hash);
+    return()=>{clearInterval(poll);clearInterval(tick);document.removeEventListener('visibilitychange',visible);window.removeEventListener('hashchange',hash);if(toastTimer.current)clearTimeout(toastTimer.current);};
+  },[refreshRounds,refreshTickets,persist]);
 
   useEffect(()=>{
     if(page!=='ticket'||!highlight)return;
@@ -139,7 +165,7 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
     busyRef.current=true;setBusy(true);
     try{
       const r=await (await backend()).cancel(t.id,t.token);
-      setTickets(v=>v.map(x=>x.id===t.id?r.ticket:x));setCancelTarget(null);
+      addTicket(r.ticket);setCancelTarget(null);
       notify('整理券を取り消しました。');refreshRounds();
     }catch(e){notify(e instanceof Error?e.message:'取り消せませんでした。',true);setCancelTarget(null);refreshTickets();}
     finally{busyRef.current=false;setBusy(false);}
@@ -162,9 +188,13 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
       <a className="back-link" href="#/"><ArrowLeft size={17}/>回の一覧へ戻る</a>
       <h1 className="v-title">あなたの整理券</h1>
       {banners}
-      {!tickets.length&&<div className="v-empty"><TicketIcon size={36} strokeWidth={1.4}/><strong>整理券はまだありません</strong><p>回の一覧から、整理券を取ってください。</p><a className="button primary" href="#/">回の一覧へ<ChevronRight size={16}/></a></div>}
-      <div className="ticket-list">{tickets.map(t=><TicketCard key={t.id} t={t} now={serverNow} highlight={t.id===highlight} onCancel={()=>setCancelTarget(t)}/>)}</div>
+      {checked==='failed'&&tickets.length>0&&<div className="banner warning"><Clock3 size={20}/><div><strong>前回確認した内容を表示しています</strong><p>通信がつながると、自動で最新の状態に更新します。</p></div></div>}
+      {!tickets.length&&saved.length>0&&checked==='pending'&&<div className="table-loading"><RefreshCw size={16} className="spin"/>整理券を確認しています</div>}
+      {!tickets.length&&saved.length>0&&checked==='failed'&&<div className="v-empty"><TriangleAlert size={36} strokeWidth={1.4}/><strong>整理券を表示できませんでした</strong><p>通信がつながると表示されます。電波の良い場所で「再読み込み」を押してください。</p></div>}
+      {!tickets.length&&(!saved.length||checked==='ok')&&<div className="v-empty"><TicketIcon size={36} strokeWidth={1.4}/><strong>整理券はまだありません</strong><p>回の一覧から、整理券を取ってください。別のブラウザーで取った場合は、そのとき保存した「整理券のリンク」を開いてください。</p><a className="button primary" href="#/">回の一覧へ<ChevronRight size={16}/></a></div>}
+      <div className="ticket-list">{tickets.map(t=><TicketCard key={t.id} t={t} now={serverNow} highlight={t.id===highlight} onCancel={()=>setCancelTarget(t)} onLink={()=>setLinkTarget(t)}/>)}</div>
       {tickets.length>0&&<p className="v-hint"><Info size={14}/>入場時にこの画面をスタッフに見せてください。時刻が動いていることを確認します。</p>}
+      {tickets.some(t=>t.status==='active'&&!t.round_finished)&&<p className="v-hint"><Info size={14}/>整理券は、いま開いているブラウザーに保存されています。QRコードを別のアプリで読むと表示されないことがあるので、「整理券のリンクを保存」からリンクを残しておくと安心です。</p>}
     </main>
     <footer className="v-footer">{content.footer}</footer>
     {cancelTarget&&<Dialog title="整理券を取り消す" busy={busy} onClose={()=>setCancelTarget(null)}>
@@ -173,6 +203,7 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
       <p className="dialog-description">{cancelTarget.round_label}（開演 {cancelTarget.starts_time}）の No.{cancelTarget.number}・{partyText(cancelTarget)} を取り消します。取り消した整理券は元に戻せません。</p>
       <div className="dialog-buttons"><button className="button" disabled={busy} onClick={()=>setCancelTarget(null)}>やめる</button><button className="button destructive" disabled={busy} onClick={()=>cancel(cancelTarget)}>{busy&&<RefreshCw size={16} className="spin"/>}取り消す</button></div>
     </Dialog>}
+    {linkTarget&&<LinkDialog t={linkTarget} notify={notify} onClose={()=>setLinkTarget(null)}/>}
     <Toast toast={toast} onClose={()=>setToast(null)}/>
   </div>;
 
@@ -233,7 +264,30 @@ function Stepper({label,note,value,min,canAdd,disabled,onChange}:{label:string;n
   </div>;
 }
 
-function TicketCard({t,now,highlight,onCancel}:{t:Ticket;now:number;highlight:boolean;onCancel:()=>void}){
+function LinkDialog({t,notify,onClose}:{t:Ticket;notify:(text:string,error?:boolean)=>void;onClose:()=>void}){
+  const link=ticketLink(t);
+  async function copy(){
+    try{await navigator.clipboard.writeText(link);notify('リンクをコピーしました。LINEのKeepやメモに貼り付けて保存してください。');}
+    catch{notify('コピーできませんでした。下のリンクを長押ししてコピーしてください。',true);}
+  }
+  async function share(){
+    try{await navigator.share({title:`${t.round_label} 整理券 No.${t.number}`,url:link});}
+    catch(e){if(!(e instanceof DOMException&&e.name==='AbortError'))copy();}
+  }
+  return <Dialog title="整理券のリンク" onClose={onClose}>
+    <span className="dialog-symbol"><Link2 size={24}/></span>
+    <h2>整理券のリンクを保存</h2>
+    <p className="dialog-description">このリンクを開くと、どのブラウザーからでも {t.round_label} の No.{t.number} を表示できます。LINEのKeep（自分だけのトーク）やメモ帳に保存しておくと安心です。</p>
+    <input className="link-box" readOnly value={link} onFocus={e=>e.currentTarget.select()} aria-label="整理券のリンク"/>
+    <p className="link-warning"><TriangleAlert size={14}/>このリンクを知っている人は、整理券の表示と取消ができます。ほかの人には送らないでください。</p>
+    <div className="dialog-buttons">
+      <button className="button" onClick={copy}><Copy size={16}/>コピー</button>
+      {'share' in navigator&&<button className="button primary" onClick={share}><Share2 size={16}/>共有・保存</button>}
+    </div>
+  </Dialog>;
+}
+
+function TicketCard({t,now,highlight,onCancel,onLink}:{t:Ticket;now:number;highlight:boolean;onCancel:()=>void;onLink:()=>void}){
   const live=t.status==='active'&&!t.round_finished;
   return <article id={`ticket-${t.id}`} className={`ticket-card ${tone(t.round_id)} ${t.status==='cancelled'?'cancelled':''} ${t.round_finished?'finished':''} ${highlight?'highlight':''}`}>
     <div className="ticket-band"><span>{content.eventName} {content.performanceName}</span><span>整理券</span></div>
@@ -247,6 +301,7 @@ function TicketCard({t,now,highlight,onCancel}:{t:Ticket;now:number;highlight:bo
       {t.status==='cancelled'&&<div className="ticket-state">{t.cancelled_by==='staff'?'スタッフにより取り消された整理券です':'取り消した整理券です'}</div>}
       {t.status==='active'&&t.round_finished&&<div className="ticket-state">この回は終了しました</div>}
     </div>
+    {t.status==='active'&&!t.round_finished&&t.token&&<div className="ticket-foot ticket-link"><button className="text-link" onClick={onLink}><Link2 size={14}/>整理券のリンクを保存（別のブラウザー用）</button></div>}
     {t.status==='active'&&!t.round_finished&&<div className="ticket-foot">{t.cancellable?<button className="text-link danger-link" onClick={onCancel}>この整理券を取り消す</button>:<span>開演時刻を過ぎたため、取り消しはできません</span>}</div>}
     <div className="ticket-shine" aria-hidden="true"/>
   </article>;

@@ -1,7 +1,7 @@
 import {api,ApiError} from './api';
 import type {AdminState,AdminTicket,Children,PublicState,Ticket} from './types';
 
-export type Saved={id:string;token:string};
+export type Saved={id:string;token:string;ticket?:Ticket};
 export type IssueInput={roundId:number;children:Children;guardians:number;name:string;deviceId:string;requestId:string};
 export type LoginInput={code?:string;email?:string;password?:string};
 
