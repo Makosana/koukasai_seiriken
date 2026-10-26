@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>使い方説明書.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<h1 id="紅華祭-整理券アプリ-使い方説明書">紅華祭 整理券アプリ 使い方説明書</h1>
+<p>はじめまして。この説明書を開いてくれて、ありがとうございます。</p>
+<p>このアプリは、紅華祭のステージ公演で <strong>「整理券を配る」「並んでもらう」「入場してもらう」</strong> を、スマホだけでできるようにするためのものです。紙の整理券を刷ったり、長い列を整理したりする苦労を、少しでも減らせたらいいなと思って作りました。</p>
+<p>むずかしい操作はありません。この説明書を上から順番に読めば、初めての人でも大丈夫です。わからないところがあっても、あわてずに「困ったときは」の章を見てください。</p>
+<hr>
+<h2 id="もくじ">もくじ</h2>
+<ol>
+<li><a href="#1-%E3%81%93%E3%81%AE%E3%82%A2%E3%83%97%E3%83%AA%E3%81%A7%E3%81%A7%E3%81%8D%E3%82%8B%E3%81%93%E3%81%A8">このアプリでできること</a></li>
+<li><a href="#2-%E3%81%BE%E3%81%9A%E8%A6%9A%E3%81%88%E3%81%A6%E3%81%8A%E3%81%8F2%E3%81%A4%E3%81%AEurl">まず覚えておく2つのURL</a></li>
+<li><a href="#3-%E6%9D%A5%E5%A0%B4%E8%80%85%E3%81%8B%E3%82%89%E8%A6%8B%E3%81%9F%E6%B5%81%E3%82%8C">来場者から見た流れ</a></li>
+<li><a href="#4-%E6%9C%AC%E7%95%AA%E5%89%8D%E3%81%AE%E6%BA%96%E5%82%99">本番前の準備</a></li>
+<li><a href="#5-%E5%BD%93%E6%97%A5%E3%81%AE%E5%8B%95%E3%81%8D%E6%96%B9">当日の動き方</a></li>
+<li><a href="#6-%E5%85%A5%E5%A0%B4%E5%8F%A3%E3%81%A7%E3%81%AE%E7%A2%BA%E8%AA%8D%E3%81%AE%E3%81%97%E3%81%8B%E3%81%9F">入場口での確認のしかた</a></li>
+<li><a href="#7-%E9%81%8B%E5%96%B6%E7%94%BB%E9%9D%A2%E3%81%AE%E4%BD%BF%E3%81%84%E6%96%B9">運営画面の使い方</a></li>
+<li><a href="#8-%E7%B5%82%E3%82%8F%E3%81%A3%E3%81%9F%E3%81%82%E3%81%A8%E3%81%AB%E3%81%99%E3%82%8B%E3%81%93%E3%81%A8">終わったあとにすること</a></li>
+<li><a href="#9-%E6%96%87%E8%A8%80%E3%82%92%E5%A4%89%E3%81%88%E3%81%9F%E3%81%84%E3%81%A8%E3%81%8Dpublishbat">文言を変えたいとき（publish.bat）</a></li>
+<li><a href="#10-%E3%83%87%E3%83%BC%E3%82%BF%E3%81%AF%E3%81%A9%E3%81%93%E3%81%AB%E3%81%82%E3%82%8B%E3%81%AEsupabase">データはどこにあるの？（Supabase）</a></li>
+<li><a href="#11-%E3%82%A4%E3%83%B3%E3%82%BF%E3%83%BC%E3%83%8D%E3%83%83%E3%83%88%E3%81%8C%E4%BD%BF%E3%81%88%E3%81%AA%E3%81%84%E3%81%A8%E3%81%8Dwi-fi%E7%89%88">インターネットが使えないとき（Wi-Fi版）</a></li>
+<li><a href="#12-%E5%9B%B0%E3%81%A3%E3%81%9F%E3%81%A8%E3%81%8D%E3%81%AF">困ったときは</a></li>
+<li><a href="#13-%E6%9C%AC%E7%95%AA%E5%BD%93%E6%97%A5%E3%81%AE%E3%83%81%E3%82%A7%E3%83%83%E3%82%AF%E3%83%AA%E3%82%B9%E3%83%88">本番当日のチェックリスト</a></li>
+</ol>
+<hr>
+<h2 id="1-このアプリでできること">1. このアプリでできること</h2>
+<ul>
+<li>来場者は、会場に貼った <strong>QRコードをスマホで読むだけ</strong> で整理券を取れます。アプリのインストールも、会員登録もいりません。</li>
+<li>整理券には <strong>「何時の回」「何番」「何名」</strong> が大きく表示されます。</li>
+<li>受付時間になると <strong>自動で配り始め</strong>、満員か受付終了時刻になると <strong>自動で締め切り</strong> ます。スタッフがずっと画面に張りついている必要はありません。</li>
+<li>1枚の整理券で、<strong>家族や友だちなど数人まとめて</strong> 入場できます（人数は来場者が選びます）。</li>
+<li>同じスマホでは、<strong>1つの回につき1枚まで</strong> しか取れません。</li>
+<li>行けなくなった人は、自分で取り消せます。取り消された分は、ちゃんと残りの席に戻ります。</li>
+</ul>
+<hr>
+<h2 id="2-まず覚えておく2つのurl">2. まず覚えておく2つのURL</h2>
+<table>
+<thead>
+<tr>
+<th>だれが使う</th>
+<th>URL</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>来場者</td>
+<td>https://makosana.github.io/koukasai_seiriken/</td>
+</tr>
+<tr>
+<td>運営スタッフ</td>
+<td>https://makosana.github.io/koukasai_seiriken/#/admin</td>
+</tr>
+</tbody>
+</table>
+<p>運営画面に入るときは、<strong>スタッフ用のメールアドレスとパスワード</strong> を入れます。これは運営スタッフだけの秘密です。来場者には教えないでくださいね。</p>
+<blockquote>
+<p>スマホでもパソコンでも、インターネットにつながっていれば、どこからでも開けます。会場のWi-Fiにつなぐ必要もありません。</p>
+</blockquote>
+<hr>
+<h2 id="3-来場者から見た流れ">3. 来場者から見た流れ</h2>
+<p>スタッフのみなさんも、一度は来場者の気持ちで触ってみてください。案内するときに、ぐっと説明しやすくなります。</p>
+<ol>
+<li>会場に貼ってあるQRコードを、スマホのカメラで読みます。</li>
+<li>回の一覧が出てくるので、行きたい回を探します。</li>
+<li>人数を「−」「＋」で選んで、<strong>「整理券を取る」</strong> を押します。</li>
+<li>確認の画面で、もう一度 <strong>「整理券を取る」</strong> を押します。</li>
+<li>整理券が表示されます。番号が大きく出て、時計が動いています。</li>
+<li>入場するときは、この画面をスタッフに見せるだけです。</li>
+</ol>
+<p>あとで整理券を見たくなったら、同じページを開いて <strong>「整理券を見る」</strong> を押せば、いつでも表示されます。整理券はそのスマホに保存されているので、ページを閉じても消えません。</p>
+<hr>
+<h2 id="4-本番前の準備">4. 本番前の準備</h2>
+<p>前日までに、ゆっくりやっておきましょう。全部で15分くらいです。</p>
+<h3 id="-運営画面にログインする">① 運営画面にログインする</h3>
+<p>運営画面のURLを開いて、スタッフ用のメールアドレスとパスワードを入れます。</p>
+<h3 id="-開催日を設定する">② 開催日を設定する</h3>
+<p>「回の管理」の上のほうにある <strong>「開催日」</strong> を、本番の日付にして「保存」を押します。</p>
+<blockquote>
+<p>回の時刻は、すべてこの日付の時刻として扱われます。日付がずれていると、受付が始まらないので気をつけてください。</p>
+</blockquote>
+<h3 id="-回を登録する">③ 回を登録する</h3>
+<p><strong>「回を追加」</strong> を押して、公演の回をひとつずつ登録します。</p>
+<table>
+<thead>
+<tr>
+<th>項目</th>
+<th>意味</th>
+<th>例</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>回の名前</td>
+<td>来場者に見える名前。空欄なら「10:00の回」になります</td>
+<td>第1回</td>
+</tr>
+<tr>
+<td>開演</td>
+<td>公演が始まる時刻</td>
+<td>10:00</td>
+</tr>
+<tr>
+<td>受付開始</td>
+<td>整理券を配り始める時刻</td>
+<td>09:00</td>
+</tr>
+<tr>
+<td>受付終了</td>
+<td>整理券を配り終える時刻</td>
+<td>09:50</td>
+</tr>
+<tr>
+<td>定員（人数）</td>
+<td>入れる人数。「3名」の整理券が出ると、残りが3人減ります</td>
+<td>100</td>
+</tr>
+<tr>
+<td>1枚の最大人数</td>
+<td>1枚で入れる人数の上限</td>
+<td>4</td>
+</tr>
+<tr>
+<td>終了扱い</td>
+<td>開演から何分たったら「終わった回」として薄く表示するか</td>
+<td>30</td>
+</tr>
+</tbody>
+</table>
+<p>2つ目からは、前の回の時刻や定員が自動で入るので、時刻を直すだけで済みます。</p>
+<h3 id="-掲示用のqrコードを印刷する">④ 掲示用のQRコードを印刷する</h3>
+<p>左のメニューの <strong>「掲示用QR」</strong> を開いて、「印刷する」を押します。</p>
+<blockquote>
+<p>印刷は、必ず <strong>公開URL（makosana.github.io）で開いた運営画面から</strong> してください。パソコンで試していたときの画面（127.0.0.1）から印刷すると、スマホでは開けないQRになってしまいます。</p>
+</blockquote>
+<h3 id="-自分のスマホで試す">⑤ 自分のスマホで試す</h3>
+<p>印刷したQRを自分のスマホで読んで、整理券を1枚取ってみてください。表示されたら成功です。試した整理券は、整理券の画面にある「この整理券を取り消す」で取り消しておきましょう。</p>
+<blockquote>
+<p>リハーサルで取った整理券をきれいに消したいときは、<a href="#10-%E3%83%87%E3%83%BC%E3%82%BF%E3%81%AF%E3%81%A9%E3%81%93%E3%81%AB%E3%81%82%E3%82%8B%E3%81%AEsupabase">10章</a> の「データを全部消す」を見てください。</p>
+</blockquote>
+<hr>
+<h2 id="5-当日の動き方">5. 当日の動き方</h2>
+<ol>
+<li>朝、運営画面を開いて、<strong>開催日が今日になっているか</strong> を確かめます。画面の上に黄色いお知らせが出ていたら、日付がずれています。</li>
+<li>QRコードを会場の見やすい場所に貼ります（予備も用意しておくと安心です）。</li>
+<li>あとは待つだけです。受付開始時刻になると、<strong>自動で配布が始まります</strong>。</li>
+<li>満員になるか、受付終了時刻になると、<strong>自動で締め切ります</strong>。</li>
+</ol>
+<p>運営画面は5秒ごとに自動で新しくなるので、残り人数がリアルタイムでわかります。</p>
+<hr>
+<h2 id="6-入場口での確認のしかた">6. 入場口での確認のしかた</h2>
+<p>入場口のスタッフさんに、ここだけは伝えておいてください。</p>
+<ol>
+<li>来場者のスマホ画面で、<strong>「回」「番号」「人数」</strong> を見ます。</li>
+<li><strong>時計が秒単位で動いているか</strong> を見ます。整理券もキラッと光って動いています。
+<ul>
+<li>止まっていたら、スクリーンショット（画面の写真）の可能性があります。</li>
+</ul>
+</li>
+<li>「取り消した整理券です」と出ているものでは入場できません。</li>
+<li>あやしいなと思ったら、運営画面の <strong>「整理券の一覧」</strong> で回を選び、番号を入れて「照合」を押します。
+<ul>
+<li>一覧に出てこない番号や、「取消」になっている番号は、本物ではありません。</li>
+</ul>
+</li>
+</ol>
+<blockquote>
+<p>来場者を疑うためではなく、ちゃんと整理券を取ってくれた人が損をしないための確認です。やさしく声をかけてあげてください。</p>
+</blockquote>
+<hr>
+<h2 id="7-運営画面の使い方">7. 運営画面の使い方</h2>
+<p>左のメニューに4つの画面があります。</p>
+<h3 id="回の管理">回の管理</h3>
+<ul>
+<li>回の一覧と、それぞれの <strong>状態</strong>（受付前／受付中／満員／一時停止中／受付終了／終了した回）が見られます。</li>
+<li><strong>一時停止</strong>：トラブルなどで配布を止めたいときに押します。「再開」で元に戻ります。</li>
+<li><strong>編集</strong>（えんぴつのマーク）：時刻や定員を直せます。ただし、すでに配った人数より少ない定員にはできません。</li>
+<li><strong>削除</strong>（ゴミ箱のマーク）：整理券を1枚も配っていない回だけ消せます。</li>
+</ul>
+<h3 id="整理券の一覧">整理券の一覧</h3>
+<ul>
+<li>回を選ぶと、その回の整理券が新しい順に並びます。</li>
+<li>番号を入れて「照合」を押すと、その番号だけを探せます。</li>
+<li><strong>取り消す</strong>：スタッフは、開演後でも整理券を取り消せます。取り消すと、来場者のスマホにも「スタッフにより取り消された整理券です」と表示されます。</li>
+</ul>
+<h3 id="集計出力">集計・出力</h3>
+<ul>
+<li>配った枚数や人数、残り人数が、回ごとに見られます。</li>
+<li><strong>CSVを出力</strong>：整理券の記録を、Excelで開けるファイルとして保存できます。</li>
+</ul>
+<h3 id="掲示用qr">掲示用QR</h3>
+<ul>
+<li>会場に貼るQRコードを表示して、そのまま印刷できます。</li>
+</ul>
+<hr>
+<h2 id="8-終わったあとにすること">8. 終わったあとにすること</h2>
+<p>お疲れさまでした！最後にひとつだけ。</p>
+<ol>
+<li>運営画面の <strong>「集計・出力」</strong> で <strong>「CSVを出力」</strong> を押して、記録を手元に保存してください。</li>
+</ol>
+<p>これで全部おしまいです。来年また使うときは、<a href="#10-%E3%83%87%E3%83%BC%E3%82%BF%E3%81%AF%E3%81%A9%E3%81%93%E3%81%AB%E3%81%82%E3%82%8B%E3%81%AEsupabase">10章</a> の方法でデータを消してから、新しい回を登録すれば大丈夫です。</p>
+<hr>
+<h2 id="9-文言を変えたいときpublishbat">9. 文言を変えたいとき（publish.bat）</h2>
+<p>集合場所や注意事項など、来場者の画面に出る文章は、<code>source/frontend/content.ts</code> というファイルに書いてあります。</p>
+<ol>
+<li><code>content.ts</code> をメモ帳などで開いて、文章を書き換えて保存します。</li>
+<li>フォルダーの中の <strong><code>publish.bat</code> をダブルクリック</strong> します。</li>
+<li>黒い画面に「完了しました」と出たら成功です。1〜2分で、公開ページに反映されます。</li>
+</ol>
+<blockquote>
+<p>初めて使うときは、GitHub のログイン画面が出ることがあります。ブラウザーでログインすれば、次からは聞かれません。</p>
+<p>「このPCにはビルド環境がないため…」と表示された場合、文章の変更はまだ反映されていません。開発担当の人に「ビルドして」と頼んでから、もう一度 <code>publish.bat</code> を押してください。</p>
+</blockquote>
+<hr>
+<h2 id="10-データはどこにあるのsupabase">10. データはどこにあるの？（Supabase）</h2>
+<p>整理券のデータは、<strong>Supabase（スパベース）</strong> というインターネット上のデータベースに保存されています。</p>
+<ul>
+<li><strong>GitHub Pages</strong>：画面（見た目）を配る係</li>
+<li><strong>Supabase</strong>：データを保存して、番号を配る係</li>
+</ul>
+<p>という役割分担です。来場者のスマホは、見た目を GitHub から、データを Supabase から受け取っています。</p>
+<h3 id="データを見たいとき">データを見たいとき</h3>
+<p>ふだんは、<strong>運営画面の「整理券の一覧」と「集計・出力」で十分</strong> です。日本語でわかりやすく表示されます。</p>
+<p>Supabase の管理画面（Table Editor）でも見られますが、記号がたくさん並んでいて読みにくいです。もし見る場合は、次の4つの列だけ見れば大丈夫です。</p>
+<table>
+<thead>
+<tr>
+<th>列</th>
+<th>意味</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>round_id</code></td>
+<td>どの回か（登録した順の番号）</td>
+</tr>
+<tr>
+<td><code>number</code></td>
+<td>整理券の番号</td>
+</tr>
+<tr>
+<td><code>party_size</code></td>
+<td>人数</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td><code>active</code> は有効、<code>cancelled</code> は取消</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>Supabase の画面で、データを直接書き換えるのはやめてください。整理券の取消は、必ず運営画面からお願いします。</p>
+</blockquote>
+<h3 id="データを全部消すリハーサルのあとなど">データを全部消す（リハーサルのあとなど）</h3>
+<p>Supabase の管理画面で、左のメニューの <strong>「SQL Editor」</strong> を開き、次の1行を貼り付けて「Run」を押します。</p>
+<pre class="hljs"><code><div><span class="hljs-keyword">truncate</span> public.tickets, public.operations, public.rounds restart <span class="hljs-keyword">identity</span>;
+</div></code></pre>
+<blockquote>
+<p>回の登録も含めて、<strong>すべて消えて元に戻せません</strong>。本番のデータが入っているときは、絶対に実行しないでください。</p>
+</blockquote>
+<h3 id="本番の数日前と前日にお願いしたいこと">本番の数日前と前日にお願いしたいこと</h3>
+<p>Supabase の無料プランは、<strong>1週間ほど使わないと、お休み（一時停止）してしまいます</strong>。本番の数日前と前日に、Supabase の管理画面を開いてみてください。お休みしていたら「Restore」を押せば目を覚まします。</p>
+<hr>
+<h2 id="11-インターネットが使えないときwi-fi版">11. インターネットが使えないとき（Wi-Fi版）</h2>
+<p>もしインターネットが使えないときのために、<strong>ノートパソコン1台で動く「Wi-Fi版」</strong> も用意してあります。</p>
+<ul>
+<li><code>来場者受付用に起動.bat</code> をダブルクリックすると、パソコンが整理券のサーバーになります。</li>
+<li>来場者のスマホは、<strong>そのパソコンと同じWi-Fi</strong>（おすすめはモバイルルーター）につないで使います。</li>
+<li>使い方は、いまの説明書とほとんど同じです。くわしくは <code>最初に読む.txt</code> を見てください。</li>
+</ul>
+<blockquote>
+<p>Wi-Fi版とインターネット版（Supabase）は、データがつながっていません。当日はどちらか一方だけを使ってください。</p>
+</blockquote>
+<hr>
+<h2 id="12-困ったときは">12. 困ったときは</h2>
+<p><strong>Q. 整理券を取ろうとしたら「まだ受付前です」と出る</strong>
+受付開始時刻の前です。運営画面で、開催日と受付開始時刻が合っているか確かめてください。</p>
+<p><strong>Q. 時間になっても受付が始まらない</strong>
+開催日が今日になっていないことが多いです。運営画面の「回の管理」で開催日を確かめてください。「一時停止中」になっていないかも見てみましょう。</p>
+<p><strong>Q. 来場者が「整理券が消えた」と言っている</strong>
+整理券はスマホのブラウザーに保存されています。別のブラウザーやシークレットモードで開くと見えません。整理券を取ったときと同じブラウザーで開いてもらってください。それでも見つからなければ、運営画面の「整理券の一覧」で番号や時刻から探せます。</p>
+<p><strong>Q. 「通信を確認できません」と出る</strong>
+スマホがインターネットにつながっているか確かめてください。電波の弱い場所なら、少し移動してもらうと直ることが多いです。</p>
+<p><strong>Q. 申し込みの途中で通信が切れた</strong>
+画面に「結果を確認する」というボタンが出ます。それを押すと、整理券が発行されていたかどうかがわかります。何度も申し込み直さなくて大丈夫です。</p>
+<p><strong>Q. 運営画面にログインできない</strong>
+メールアドレスとパスワードが合っているか確かめてください。Supabase がお休み中（<a href="#10-%E3%83%87%E3%83%BC%E3%82%BF%E3%81%AF%E3%81%A9%E3%81%93%E3%81%AB%E3%81%82%E3%82%8B%E3%81%AEsupabase">10章</a>）のこともあります。</p>
+<p><strong>Q. 同じ人が何枚も取っているかも</strong>
+スマホ1台につき1回1枚にしていますが、別のブラウザーなどを使えば取れてしまいます。あやしいものは、運営画面の「整理券の一覧」から取り消せます。「端末」の欄が同じものは、同じスマホで取った整理券です。</p>
+<p><strong>Q. 定員を増やしたい・減らしたい</strong>
+「回の管理」のえんぴつのマークから変えられます。すでに配った人数より少なくはできません。</p>
+<hr>
+<h2 id="13-本番当日のチェックリスト">13. 本番当日のチェックリスト</h2>
+<p>印刷して、ひとつずつ✔をつけていってください。</p>
+<ul>
+<li><input type="checkbox" id="checkbox0"><label for="checkbox0">前日までに、Supabase がお休みしていないか確認した</label></li>
+<li><input type="checkbox" id="checkbox1"><label for="checkbox1">運営画面にログインできた</label></li>
+<li><input type="checkbox" id="checkbox2"><label for="checkbox2">開催日が今日になっている</label></li>
+<li><input type="checkbox" id="checkbox3"><label for="checkbox3">回の開演・受付時間・定員が正しい</label></li>
+<li><input type="checkbox" id="checkbox4"><label for="checkbox4">掲示用QRを公開URLの運営画面から印刷して、貼った（予備もある）</label></li>
+<li><input type="checkbox" id="checkbox5"><label for="checkbox5">自分のスマホでQRを読んで、整理券が取れることを確かめた</label></li>
+<li><input type="checkbox" id="checkbox6"><label for="checkbox6">入場口のスタッフに、確認のしかた（回・番号・人数、時計が動いているか）を伝えた</label></li>
+<li><input type="checkbox" id="checkbox7"><label for="checkbox7">終わったら、CSVを出力して保存した</label></li>
+</ul>
+<hr>
+<p>ここまで読んでくれて、本当にありがとうございました。</p>
+<p>整理券のことはアプリにまかせて、スタッフのみなさんは、来場者の笑顔と、ステージの成功に集中してください。
+すてきな紅華祭になりますように。</p>
+
+</body>
+</html>

@@ -18,7 +18,7 @@
 - backend/schema.sql：表の定義。番号の重複、端末ごとの重複、整理券の削除・改変を拒否。
 - tests/：HTTP経由の検証（受付時間、定員、取消、同時400件、再起動、スタッフコード）。
 - frontend/lib/backend.ts：画面からのデータの呼び出し口。Wi-Fi版は `/api/...` を呼ぶ。
-- frontend/lib/backend-supabase.ts：Supabase版の呼び出し（`supabase/migrations/001_init.sql` の関数）。
+- frontend/lib/backend-supabase.ts：Supabase版の呼び出し（`supabase/migrations/` の関数。001 → 002 の順に実行）。
 - build-online.mjs / preview-online.mjs：Supabase版のビルドと、このPCで試すための簡易サーバー。
 - tests/supabase-sql.test.mjs：Supabase版のSQLを埋め込みPostgres（PGlite）で検証。
 - tests/online-smoke.mjs：本物のSupabaseプロジェクトに対する動作確認（200件同時を含む）。

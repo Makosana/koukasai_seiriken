@@ -1,6 +1,6 @@
 import { DatabaseSync, backup } from 'node:sqlite';
 import { readFileSync, mkdirSync, renameSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { createHash, randomUUID, randomBytes, randomInt } from 'node:crypto';
 
 export function openStorage(dataDirectory, schemaPath) {
@@ -11,15 +11,19 @@ export function openStorage(dataDirectory, schemaPath) {
     sqlite.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
     const check=sqlite.prepare('PRAGMA quick_check').get();
     if(Object.values(check)[0]!=='ok')throw new Error('データベースの整合性を確認できません。データは初期化せず、バックアップを確認してください。');
-    const schema=readFileSync(schemaPath,'utf8');
-    const schemaHash=createHash('sha256').update(schema).digest('hex');
+    // v1 is schema.sql; later versions are additive files in migrations/ applied in order, each verified by hash.
+    const migrations=[{version:1,path:schemaPath},{version:2,path:join(dirname(schemaPath),'migrations','002_children.sql')}];
     sqlite.exec('CREATE TABLE IF NOT EXISTS app_migrations (version INTEGER PRIMARY KEY, sha256 TEXT NOT NULL); CREATE TABLE IF NOT EXISTS app_metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL);');
-    const applied=sqlite.prepare('SELECT sha256 FROM app_migrations WHERE version=1').get();
-    if(applied&&applied.sha256!==schemaHash)throw new Error('既存データとプログラムのDB定義が一致しません。自動で書き換えずに停止します。');
-    if(!applied){
-      if(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('rounds','tickets')").get())throw new Error('版情報のない既存データを検出しました。上書きせずに停止します。');
+    const newest=sqlite.prepare('SELECT MAX(version) AS v FROM app_migrations').get().v??0;
+    if(newest>migrations.length)throw new Error('このデータは新しい版のプログラムで作られています。新しい版で起動してください。');
+    for(const {version,path} of migrations){
+      const sql=readFileSync(path,'utf8');
+      const hash=createHash('sha256').update(sql).digest('hex');
+      const applied=sqlite.prepare('SELECT sha256 FROM app_migrations WHERE version=?').get(version);
+      if(applied){if(applied.sha256!==hash)throw new Error('既存データとプログラムのDB定義が一致しません。自動で書き換えずに停止します。');continue;}
+      if(version===1&&sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('rounds','tickets')").get())throw new Error('版情報のない既存データを検出しました。上書きせずに停止します。');
       sqlite.exec('BEGIN IMMEDIATE');
-      try{sqlite.exec(schema);sqlite.prepare('INSERT INTO app_migrations(version,sha256) VALUES(1,?)').run(schemaHash);sqlite.exec('COMMIT');}
+      try{sqlite.exec(sql);sqlite.prepare('INSERT INTO app_migrations(version,sha256) VALUES(?,?)').run(version,hash);sqlite.exec('COMMIT');}
       catch(e){sqlite.exec('ROLLBACK');throw e;}
     }
     const meta=key=>sqlite.prepare('SELECT value FROM app_metadata WHERE key=?').get(key)?.value;

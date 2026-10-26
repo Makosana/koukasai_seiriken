@@ -2,18 +2,24 @@ import {useCallback,useEffect,useRef,useState} from 'react';
 import {Ticket as TicketIcon,Clock3,Users,ChevronRight,RefreshCw,TriangleAlert,ArrowLeft,Minus,Plus,Info,CheckCircle2} from 'lucide-react';
 import {ApiError,newId,scope,clockSeconds,dateLabel} from './lib/api';
 import {backend,MODE,type Saved} from './lib/backend';
-import type {PublicRound,PublicState,Ticket} from './lib/types';
-import {STATUS_LABELS} from './lib/types';
+import type {Children,PublicRound,PublicState,Ticket} from './lib/types';
+import {STATUS_LABELS,CHILD_KINDS,MAX_GUARDIANS,emptyChildren,childTotal,needsGuardian,childSummary} from './lib/types';
 import {content} from './content';
 import {Dialog,Toast} from './ui';
 
 const DEVICE_KEY=`seiriken-${scope}-device-v1`,TICKETS_KEY=`seiriken-${scope}-tickets-v1`,PENDING_KEY=`seiriken-${scope}-pending-v1`;
-type Pending={requestId:string;roundId:number;partySize:number};
+type Pending={requestId:string;roundId:number;children:Children;guardians:number};
+type Form={round:PublicRound;children:Children;guardians:number};
 
 function load<T>(key:string,fallback:T):T{const raw=localStorage.getItem(key);if(!raw)return fallback;try{return JSON.parse(raw) as T;}catch{return fallback;}}
 function deviceId(){let id=localStorage.getItem(DEVICE_KEY);if(!id){id=newId();localStorage.setItem(DEVICE_KEY,id);}return id;}
 export const tone=(roundId:number)=>`tone-${roundId%6}`;
 const byStart=(a:Ticket,b:Ticket)=>a.starts_at.localeCompare(b.starts_at)||a.number-b.number;
+const sameParty=(p:Pending,f:Form)=>p.roundId===f.round.id&&p.guardians===f.guardians&&CHILD_KINDS.every(k=>p.children[k.key]===f.children[k.key]);
+export function partyText(t:Ticket){
+  const kids=t.children&&childTotal(t.children)?`子ども ${t.party_size}名（${childSummary(t.children)}）`:`${t.party_size}名`;
+  return t.guardians?`${kids}・保護者 ${t.guardians}名`:kids;
+}
 
 function minutesUntil(iso:string,now:number){return Math.max(1,Math.ceil((Date.parse(iso)-now)/60000));}
 function roundNote(r:PublicRound,now:number){
@@ -31,8 +37,7 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
   const [saved,setSaved]=useState<Saved[]>([]),[tickets,setTickets]=useState<Ticket[]>([]);
   const [connection,setConnection]=useState<'loading'|'ok'|'error'>('loading');
   const [storageError,setStorageError]=useState(false);
-  const [party,setParty]=useState<Record<number,number>>({});
-  const [confirm,setConfirm]=useState<{round:PublicRound;partySize:number}|null>(null);
+  const [form,setForm]=useState<Form|null>(null);
   const [cancelTarget,setCancelTarget]=useState<Ticket|null>(null);
   const [pending,setPending]=useState<Pending|null>(null);
   const [busy,setBusy]=useState(false),[issuing,setIssuing]=useState(false),[highlight,setHighlight]=useState<string|null>(null);
@@ -73,7 +78,8 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
       list=load<Saved[]>(TICKETS_KEY,[]).filter(s=>typeof s?.id==='string'&&typeof s?.token==='string');
       p=load<Pending|null>(PENDING_KEY,null);
     }catch{setStorageError(true);}
-    savedRef.current=list;setSaved(list);if(p?.requestId)setPending(p);
+    savedRef.current=list;setSaved(list);
+    if(p?.requestId&&p.children)setPending(p);else if(p){try{localStorage.removeItem(PENDING_KEY);}catch{}}
     refreshRounds();refreshTickets(list);
     const poll=setInterval(()=>{if(document.visibilityState==='visible'&&!busyRef.current){refreshRounds();refreshTickets();}},10000);
     const tick=setInterval(()=>setNow(Date.now()),1000);
@@ -92,23 +98,24 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
   const activeTickets=tickets.filter(t=>t.status==='active'&&!t.round_finished);
   const mine=(roundId:number)=>tickets.find(t=>t.round_id===roundId&&t.status==='active');
 
-  async function issue(round:PublicRound,partySize:number){
+  async function issue(f:Form){
     if(busyRef.current)return;
-    const op:Pending=pending&&pending.roundId===round.id&&pending.partySize===partySize?pending:{requestId:newId(),roundId:round.id,partySize};
+    const guardians=needsGuardian(f.children)?f.guardians:0;
+    const op:Pending=pending&&sameParty(pending,{...f,guardians})?pending:{requestId:newId(),roundId:f.round.id,children:f.children,guardians};
     let device:string;
     try{device=deviceId();localStorage.setItem(PENDING_KEY,JSON.stringify(op));setPending(op);}
     catch{setStorageError(true);notify('このブラウザーでは整理券を保存できないため、申し込みを止めました。',true);return;}
     busyRef.current=true;setBusy(true);setIssuing(true);
     try{
-      const r=await (await backend()).issue({roundId:op.roundId,partySize:op.partySize,deviceId:device,requestId:op.requestId});
-      addTicket(r.ticket);savePending(null);setConfirm(null);setHighlight(r.ticket.id);
+      const r=await (await backend()).issue({roundId:op.roundId,children:op.children,guardians:op.guardians,deviceId:device,requestId:op.requestId});
+      addTicket(r.ticket);savePending(null);setForm(null);setHighlight(r.ticket.id);
       notify(`${r.ticket.round_label}の整理券（No.${r.ticket.number}）を取りました。`);
       location.hash='#/ticket';
       refreshRounds();
     }catch(e){
       const err=e instanceof ApiError?e:new ApiError('処理を完了できませんでした。',0,'network');
-      if(err.code==='network'||err.status>=500){notify('通信が途中で途切れました。下の「結果を確認する」を押してください。',true);setConfirm(null);}
-      else{savePending(null);setConfirm(null);notify(err.message,true);if(err.code==='already')refreshTickets();}
+      if(err.code==='network'||err.status>=500){notify('通信が途中で途切れました。下の「結果を確認する」を押してください。',true);setForm(null);}
+      else{savePending(null);setForm(null);notify(err.message,true);if(err.code==='already')refreshTickets();}
       refreshRounds();
     }finally{busyRef.current=false;setBusy(false);setIssuing(false);}
   }
@@ -162,7 +169,7 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
     {cancelTarget&&<Dialog title="整理券を取り消す" busy={busy} onClose={()=>setCancelTarget(null)}>
       <span className="dialog-symbol red"><TriangleAlert size={24}/></span>
       <h2>整理券を取り消しますか？</h2>
-      <p className="dialog-description">{cancelTarget.round_label}（開演 {cancelTarget.starts_time}）の No.{cancelTarget.number}・{cancelTarget.party_size}名 を取り消します。取り消した整理券は元に戻せません。</p>
+      <p className="dialog-description">{cancelTarget.round_label}（開演 {cancelTarget.starts_time}）の No.{cancelTarget.number}・{partyText(cancelTarget)} を取り消します。取り消した整理券は元に戻せません。</p>
       <div className="dialog-buttons"><button className="button" disabled={busy} onClick={()=>setCancelTarget(null)}>やめる</button><button className="button destructive" disabled={busy} onClick={()=>cancel(cancelTarget)}>{busy&&<RefreshCw size={16} className="spin"/>}取り消す</button></div>
     </Dialog>}
     <Toast toast={toast} onClose={()=>setToast(null)}/>
@@ -179,29 +186,46 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
       {!state&&connection==='loading'&&<div className="table-loading"><RefreshCw size={16} className="spin"/>読み込み中</div>}
       {state&&!state.rounds.length&&<div className="v-empty"><Clock3 size={32} strokeWidth={1.4}/><strong>まだ回が登録されていません</strong><p>しばらくしてから、もう一度開いてください。</p></div>}
       <div className="round-list">{state?.rounds.map(r=>{
-        const owned=mine(r.id),max=Math.max(1,Math.min(r.max_party,r.remaining)),size=Math.min(party[r.id]??1,max);
+        const owned=mine(r.id);
         return <article key={r.id} className={`round-card ${r.status==='finished'?'finished':''}`}>
           <div className="round-head"><span className={`round-tone ${tone(r.id)}`}/><div><h3>{r.label}</h3><p>開演 <strong>{r.starts_time}</strong></p></div><span className={`status-chip status-${r.status}`}><span/>{STATUS_LABELS[r.status]}</span></div>
           <dl className="round-meta"><div><dt>受付時間</dt><dd>{r.opens_time}〜{r.closes_time}</dd></div><div><dt>残り</dt><dd className={r.remaining>0&&r.remaining<=Math.max(5,r.capacity_people*0.1)?'low':''}>{r.status==='finished'?'—':`${r.remaining} 名`}<small> / {r.capacity_people} 名</small></dd></div></dl>
           {owned?<a className="button full" href="#/ticket" onClick={()=>setHighlight(owned.id)}><TicketIcon size={17}/>整理券を見る（No.{owned.number}）</a>
-          :r.status==='open'?<div className="issue-row">
-            <div className="party-control" aria-label="人数"><button aria-label="1名減らす" disabled={size<=1||busy} onClick={()=>setParty({...party,[r.id]:size-1})}><Minus size={18}/></button><span><strong>{size}</strong>名</span><button aria-label="1名増やす" disabled={size>=max||busy} onClick={()=>setParty({...party,[r.id]:size+1})}><Plus size={18}/></button></div>
-            <button className="button primary" disabled={busy||storageError||!!pending} onClick={()=>setConfirm({round:r,partySize:size})}><TicketIcon size={17}/>整理券を取る</button>
-          </div>
+          :r.status==='open'?<button className="button primary full" disabled={busy||storageError||!!pending} onClick={()=>setForm({round:r,children:emptyChildren(),guardians:1})}><TicketIcon size={17}/>整理券を取る</button>
           :<p className="round-note">{roundNote(r,serverNow)}</p>}
-          {r.status==='open'&&!owned&&<p className="round-sub">1枚で最大 {r.max_party} 名まで入場できます。</p>}
+          {r.status==='open'&&!owned&&<p className="round-sub">1枚で子ども最大 {r.max_party} 名まで申し込めます。未就学児・小学生は、保護者の方も一緒に入場できます（定員には数えません）。</p>}
         </article>;
       })}</div>
     </main>
     <footer className="v-footer">{content.footer}</footer>
-    {confirm&&<Dialog title="整理券を取る" busy={busy} onClose={()=>setConfirm(null)}>
-      <span className="dialog-symbol"><TicketIcon size={24}/></span>
-      <h2>この内容で整理券を取りますか？</h2>
-      <div className="confirm-values"><div><span>回</span><strong>{confirm.round.label}</strong></div><div><span>開演</span><strong>{confirm.round.starts_time}</strong></div><div className="emphasis"><span>人数</span><strong>{confirm.partySize} 名</strong></div></div>
-      <p className="dialog-description">整理券はこのスマホに保存されます。1つの回につき1枚までです。</p>
-      <div className="dialog-buttons"><button className="button" disabled={busy} onClick={()=>setConfirm(null)}>戻る</button><button className="button primary" disabled={busy} onClick={()=>issue(confirm.round,confirm.partySize)}>{busy?<RefreshCw size={16} className="spin"/>:<Users size={16}/>}整理券を取る</button></div>
-    </Dialog>}
+    {form&&(()=>{
+      const round=state?.rounds.find(x=>x.id===form.round.id)??form.round;
+      const total=childTotal(form.children),max=Math.max(0,Math.min(round.max_party,round.remaining)),guardian=needsGuardian(form.children);
+      const setKind=(key:keyof Children,value:number)=>setForm({...form,children:{...form.children,[key]:value}});
+      return <Dialog title="整理券を取る" busy={busy} onClose={()=>setForm(null)}>
+        <span className="dialog-symbol"><TicketIcon size={24}/></span>
+        <h2>{round.label}（開演 {round.starts_time}）</h2>
+        <p className="dialog-description">入場するお子さまの人数を、区分ごとに選んでください。1枚で子ども {round.max_party} 名まで、残りは {round.remaining} 名分です。</p>
+        <div className="party-form">
+          {CHILD_KINDS.map(k=><Stepper key={k.key} label={k.label} value={form.children[k.key]} min={0} canAdd={total<max} disabled={busy} onChange={v=>setKind(k.key,v)}/>)}
+          {guardian&&<div className="party-guardian">
+            <Stepper label="保護者" note="定員には数えません" value={form.guardians} min={0} canAdd={form.guardians<MAX_GUARDIANS} disabled={busy} onChange={v=>setForm({...form,guardians:v})}/>
+            <p>未就学児・小学生と一緒に入場する保護者の人数です。</p>
+          </div>}
+        </div>
+        <div className="confirm-values"><div className="emphasis"><span>子ども</span><strong>{total} 名</strong></div>{guardian&&<div><span>保護者</span><strong>{form.guardians} 名</strong></div>}</div>
+        <p className="dialog-description">整理券はこのスマホに保存されます。1つの回につき1枚までです。</p>
+        <div className="dialog-buttons"><button className="button" disabled={busy} onClick={()=>setForm(null)}>戻る</button><button className="button primary" disabled={busy||total<1||total>max} onClick={()=>issue({...form,round})}>{busy?<RefreshCw size={16} className="spin"/>:<Users size={16}/>}整理券を取る</button></div>
+      </Dialog>;
+    })()}
     <Toast toast={toast} onClose={()=>setToast(null)}/>
+  </div>;
+}
+
+function Stepper({label,note,value,min,canAdd,disabled,onChange}:{label:string;note?:string;value:number;min:number;canAdd:boolean;disabled:boolean;onChange:(v:number)=>void}){
+  return <div className="party-row">
+    <span className="party-label">{label}{note&&<small>{note}</small>}</span>
+    <div className="party-control" aria-label={`${label}の人数`}><button type="button" aria-label={`${label}を1名減らす`} disabled={disabled||value<=min} onClick={()=>onChange(value-1)}><Minus size={18}/></button><span><strong>{value}</strong>名</span><button type="button" aria-label={`${label}を1名増やす`} disabled={disabled||!canAdd} onClick={()=>onChange(value+1)}><Plus size={18}/></button></div>
   </div>;
 }
 
@@ -212,7 +236,8 @@ function TicketCard({t,now,highlight,onCancel}:{t:Ticket;now:number;highlight:bo
     <div className="ticket-body">
       <div className="ticket-round"><strong>{t.round_label}</strong><span>開演 {t.starts_time}</span></div>
       <div className="ticket-number"><span>No.</span>{t.number}</div>
-      <div className="ticket-party"><Users size={20}/>{t.party_size} 名</div>
+      <div className="ticket-party"><Users size={20}/>{t.children&&childTotal(t.children)?<>子ども {t.party_size} 名{t.guardians?<span className="ticket-guardians">＋保護者 {t.guardians} 名</span>:null}</>:<>{t.party_size} 名</>}</div>
+      {t.children&&childTotal(t.children)>0&&<div className="ticket-kinds">{childSummary(t.children).replace(/(\d+)/g,' $1名')}</div>}
       {live&&<div className="ticket-live" aria-label="現在時刻"><span className="live-dot"/>{dateLabel(now)}<strong>{clockSeconds(now)}</strong></div>}
       {t.status==='cancelled'&&<div className="ticket-state">{t.cancelled_by==='staff'?'スタッフにより取り消された整理券です':'取り消した整理券です'}</div>}
       {t.status==='active'&&t.round_finished&&<div className="ticket-state">この回は終了しました</div>}

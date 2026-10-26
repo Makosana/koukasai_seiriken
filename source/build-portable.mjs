@@ -8,6 +8,8 @@ const destination=process.env.SEIRIKEN_OUTPUT?resolve(process.env.SEIRIKEN_OUTPU
 mkdirSync(join(destination,'app/lib'),{recursive:true});
 for(const name of ['server.mjs','storage.mjs','control.mjs','schema.sql'])copyFileSync(join(root,'backend',name),join(destination,'app',name));
 for(const name of readdirSync(join(root,'backend/lib')))copyFileSync(join(root,'backend/lib',name),join(destination,'app/lib',name));
+mkdirSync(join(destination,'app/migrations'),{recursive:true});
+for(const name of readdirSync(join(root,'backend/migrations')))copyFileSync(join(root,'backend/migrations',name),join(destination,'app/migrations',name));
 await build({configFile:join(root,'vite.config.mjs')});
 copyFileSync(join(root,'frontend/favicon.svg'),join(destination,'app/public/favicon.svg'));
 console.log('Portable application built: '+destination);

@@ -50,7 +50,7 @@ const {id}=await rpc('admin_operation',{p:{action:'create',label:'自動確認',
 step(`確認用の回を作成（id ${id}）`);
 
 try{
-  const issue=(party,device=randomUUID(),req=randomUUID())=>rpc('issue_ticket',{p_round_id:id,p_party_size:party,p_device_id:device,p_request_id:req});
+  const issue=(party,device=randomUUID(),req=randomUUID())=>rpc('issue_ticket',{p_round_id:id,p_children:{high_school:party},p_guardians:0,p_device_id:device,p_request_id:req});
   const device=randomUUID(),req=randomUUID();
   const first=await issue(2,device,req);
   assert.equal(first.ticket.number,1);
