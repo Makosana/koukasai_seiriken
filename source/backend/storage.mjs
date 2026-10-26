@@ -12,7 +12,7 @@ export function openStorage(dataDirectory, schemaPath) {
     const check=sqlite.prepare('PRAGMA quick_check').get();
     if(Object.values(check)[0]!=='ok')throw new Error('データベースの整合性を確認できません。データは初期化せず、バックアップを確認してください。');
     // v1 is schema.sql; later versions are additive files in migrations/ applied in order, each verified by hash.
-    const migrations=[{version:1,path:schemaPath},{version:2,path:join(dirname(schemaPath),'migrations','002_children.sql')}];
+    const migrations=[{version:1,path:schemaPath},{version:2,path:join(dirname(schemaPath),'migrations','002_children.sql')},{version:3,path:join(dirname(schemaPath),'migrations','003_name.sql')}];
     sqlite.exec('CREATE TABLE IF NOT EXISTS app_migrations (version INTEGER PRIMARY KEY, sha256 TEXT NOT NULL); CREATE TABLE IF NOT EXISTS app_metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL);');
     const newest=sqlite.prepare('SELECT MAX(version) AS v FROM app_migrations').get().v??0;
     if(newest>migrations.length)throw new Error('このデータは新しい版のプログラムで作られています。新しい版で起動してください。');

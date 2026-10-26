@@ -6,7 +6,7 @@ import {readFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {PGlite} from '@electric-sql/pglite';
 
-const migrations=['001_init.sql','002_children.sql'].map(f=>readFileSync(new URL('../../supabase/migrations/'+f,import.meta.url),'utf8'));
+const migrations=['001_init.sql','002_children.sql','003_name.sql'].map(f=>readFileSync(new URL('../../supabase/migrations/'+f,import.meta.url),'utf8'));
 const STAFF='00000000-0000-4000-8000-000000000001';
 const jst=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'});
 const day=offset=>jst.format(new Date(Date.now()+offset*86400000));
@@ -69,7 +69,7 @@ test('受付前・受付中・一時停止・受付終了・終了した回の�
 test('定員・人数上限・1端末1枚・同じ送信の再送・番号の連番', async()=>{
   const db=await setup();
   const {id}=await op(db,round);
-  const issue=(party,device=randomUUID(),request=randomUUID())=>call(db,'anon','issue_ticket',[id,kids(party),0,device,request]);
+  const issue=(party,device=randomUUID(),request=randomUUID())=>call(db,'anon','issue_ticket',[id,kids(party),0,'紅華 太郎',device,request]);
   const a=await issue(4);
   assert.equal(a.ticket.number,1);assert.equal(a.replayed,false);assert.ok(a.ticket.token);
   await fails(issue(5),'party');
@@ -91,15 +91,19 @@ test('定員・人数上限・1端末1枚・同じ送信の再送・番号の連
   const looked=await call(db,'anon','lookup_tickets',[JSON.stringify([{id:a.ticket.id,token:a.ticket.token},{id:b.ticket.id,token:'wrong'},{id:'bad',token:'x'}])]);
   assert.equal(looked.tickets[0].number,1);assert.equal(looked.tickets[1],null);assert.equal(looked.tickets[2],null);
   await fails(call(db,'anon','lookup_tickets',[JSON.stringify(Array.from({length:31},()=>({id:a.ticket.id,token:'x'})))]),'invalid');
-  await fails(call(db,'anon','issue_ticket',[999,kids(1),0,randomUUID(),randomUUID()]),'not_found');
+  await fails(call(db,'anon','issue_ticket',[999,kids(1),0,'紅華 太郎',randomUUID(),randomUUID()]),'not_found');
 });
 
 test('子どもの区分と保護者: 定員は子どもだけで数え、保護者は未就学児・小学生がいるときだけ記録する', async()=>{
   const db=await setup();
   const {id}=await op(db,{...round,capacity:6,maxParty:3});
-  const send=(children,guardians=0)=>call(db,'anon','issue_ticket',[id,JSON.stringify(children),guardians,randomUUID(),randomUUID()]);
-  const a=(await send({preschool:1,elementary:2},2)).ticket;
-  assert.equal(a.party_size,3);assert.equal(a.guardians,2);
+  const send=(children,guardians=0,name='山田 花子')=>call(db,'anon','issue_ticket',[id,JSON.stringify(children),guardians,name,randomUUID(),randomUUID()]);
+  const a=(await send({preschool:1,elementary:2},2,'  紅華 花子  ')).ticket;
+  assert.equal(a.party_size,3);assert.equal(a.guardians,2);assert.equal(a.name,'紅華 花子');
+  await fails(send({high_school:1},0,'   '),'invalid');
+  await fails(send({high_school:1},0,null),'invalid');
+  await fails(send({high_school:1},0,'あ'.repeat(31)),'invalid');
+  await fails(send({high_school:1},0,'a\nb'),'invalid');
   assert.deepEqual(a.children,{preschool:1,elementary:2,junior_high:0,high_school:0});
   assert.equal((await call(db,'anon','public_state')).rounds[0].remaining,3);
   assert.equal((await send({junior_high:1,high_school:1},3)).ticket.guardians,0);
@@ -109,7 +113,7 @@ test('子どもの区分と保護者: 定員は子どもだけで数え、保護
   await fails(send({elementary:-1,high_school:2}),'invalid');
   await fails(send({elementary:1.5}),'invalid');
   await fails(send({elementary:'1'}),'invalid');
-  await fails(call(db,'anon','issue_ticket',[id,'[1]',0,randomUUID(),randomUUID()]),'invalid');
+  await fails(call(db,'anon','issue_ticket',[id,'[1]',0,'紅華 太郎',randomUUID(),randomUUID()]),'invalid');
   await fails(send({preschool:2}),'remaining');
   await send({preschool:1});
   const state=await call(db,'staff','admin_state');
@@ -117,20 +121,22 @@ test('子どもの区分と保護者: 定員は子どもだけで数え、保護
   assert.equal(state.totals.guardians,2);assert.equal(state.rounds[0].status,'full');
   const rows=await call(db,'staff','admin_export_tickets');
   const first=rows.find(r=>r.number===1);
-  assert.equal(first.preschool,1);assert.equal(first.elementary,2);assert.equal(first.guardians,2);
+  assert.equal(first.preschool,1);assert.equal(first.elementary,2);assert.equal(first.guardians,2);assert.equal(first.name,'紅華 花子');
+  assert.equal((await call(db,'staff','admin_list_tickets',[id,1])).tickets[0].name,'紅華 花子');
   await assert.rejects(db.query('update public.tickets set guardians=5'),/取消以外/);
+  await assert.rejects(db.query("update public.tickets set name='x'"),/取消以外/);
 });
 
 test('取消: 本人は開演前だけ、スタッフはいつでも。取消番号は再利用しない', async()=>{
   const db=await setup();
   const {id}=await op(db,round);
   const device=randomUUID();
-  const t=(await call(db,'anon','issue_ticket',[id,kids(2),0,device,randomUUID()])).ticket;
+  const t=(await call(db,'anon','issue_ticket',[id,kids(2),0,'紅華 太郎',device,randomUUID()])).ticket;
   await fails(call(db,'anon','cancel_ticket',[t.id,'wrong']),'forbidden');
   const done=await call(db,'anon','cancel_ticket',[t.id,t.token]);
   assert.equal(done.ticket.status,'cancelled');assert.equal(done.ticket.cancelled_by,'visitor');
   assert.equal((await call(db,'anon','cancel_ticket',[t.id,t.token])).replayed,true);
-  const next=(await call(db,'anon','issue_ticket',[id,kids(2),0,device,randomUUID()])).ticket;
+  const next=(await call(db,'anon','issue_ticket',[id,kids(2),0,'紅華 太郎',device,randomUUID()])).ticket;
   assert.equal(next.number,2);
   await op(db,{...round,action:'update',id,startsTime:'00:00',finishAfterMinutes:600});
   await fails(call(db,'anon','cancel_ticket',[next.id,next.token]),'started');
@@ -148,7 +154,7 @@ test('取消: 本人は開演前だけ、スタッフはいつでも。取消番
 test('運営操作の検証と記録の保護', async()=>{
   const db=await setup();
   const {id}=await op(db,round);
-  await call(db,'anon','issue_ticket',[id,kids(4),0,randomUUID(),randomUUID()]);
+  await call(db,'anon','issue_ticket',[id,kids(4),0,'紅華 太郎',randomUUID(),randomUUID()]);
   await fails(op(db,{...round,action:'update',id,capacity:3}),'invalid');
   await fails(op(db,{action:'delete',id}),'invalid');
   await fails(op(db,{action:'settings',eventDate:'2026-02-30'}),'invalid');

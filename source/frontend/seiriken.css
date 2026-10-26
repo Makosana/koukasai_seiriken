@@ -90,6 +90,14 @@
 .party-guardian p{font-size:11px;color:#8a95a4;margin-top:6px;text-align:left}
 .ticket-guardians{font-size:15px;font-weight:600;color:#6b7380;margin-left:6px}
 .ticket-kinds{font-size:13px;color:#6b7380;margin-top:8px}
+.name-field{display:flex;flex-direction:column;gap:6px;text-align:left;margin:14px 0 4px}
+.name-field>span{font-size:14px;font-weight:700;color:#3a414d;display:flex;align-items:baseline;gap:8px}
+.name-field small{font-size:11px;font-weight:500;color:#8a95a4}
+.name-field input{width:100%;font-size:17px;border:1px solid #dce1e8;border-radius:10px;padding:11px 12px;background:#fff}
+.name-field input:focus{outline:2px solid #e8a39b;outline-offset:1px;border-color:#e8a39b}
+.name-hint{font-size:12px;color:#b4541a;margin:6px 0 0;text-align:left}
+.ticket-name{font-size:18px;font-weight:700;color:#3a414d;margin:2px 0 6px;word-break:break-all}
+.ticket-card.cancelled .ticket-name,.ticket-card.finished .ticket-name{color:#b5bac2}
 
 .ticket-list{display:flex;flex-direction:column;gap:16px}
 .ticket-card{position:relative;overflow:hidden;background:#fff;border-radius:18px;border:2px solid var(--tone);box-shadow:0 10px 30px #25304414}

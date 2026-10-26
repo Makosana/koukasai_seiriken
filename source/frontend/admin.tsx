@@ -199,8 +199,9 @@ export default function Admin(){
             <select className="filter-select" value={ticketRound??''} onChange={e=>{setTicketRound(Number(e.target.value));setNumberDraft('');setNumberQuery('');}} aria-label="回を選ぶ">{rounds.map(r=><option key={r.id} value={r.id}>{r.label}（開演 {r.starts_time}）</option>)}</select>
             <form className="search-field" onSubmit={e=>{e.preventDefault();setNumberQuery(numberDraft.trim());}}><Search size={18}/><input inputMode="numeric" placeholder="番号で照合（例: 23）" aria-label="番号で検索" value={numberDraft} onChange={e=>/^\d{0,6}$/.test(e.target.value)&&setNumberDraft(e.target.value)}/>{numberQuery&&<button type="button" onClick={()=>{setNumberDraft('');setNumberQuery('');}}>解除</button>}<button type="submit">照合</button></form>
           </div>
-          {rounds.length?<div className="table-scroll"><table><thead><tr><th>番号</th><th>子ども</th><th>保護者</th><th>状態</th><th>発行時刻</th><th>端末</th><th className="right">操作</th></tr></thead><tbody>{list.map(t=><tr key={t.id} className={t.status==='cancelled'?'voided':''}>
+          {rounds.length?<div className="table-scroll"><table><thead><tr><th>番号</th><th>名前</th><th>子ども</th><th>保護者</th><th>状態</th><th>発行時刻</th><th>端末</th><th className="right">操作</th></tr></thead><tbody>{list.map(t=><tr key={t.id} className={t.status==='cancelled'?'voided':''}>
             <td><strong className="ticket-no">No.{t.number}</strong></td>
+            <td>{t.name||<span className="muted">—</span>}</td>
             <td className="mono">{t.party_size} 名{t.children&&childSummary(t.children)&&<span className="table-note">{childSummary(t.children)}</span>}</td>
             <td className="mono">{t.guardians?`${t.guardians} 名`:'—'}</td>
             <td><span className={`kind-pill ${t.status==='active'?'sale':'void'}`}>{t.status==='active'?'有効':t.cancelled_by==='staff'?'取消（スタッフ）':'取消（本人）'}</span>{t.cancelled_at&&<span className="table-note">{time(t.cancelled_at)}</span>}</td>
@@ -263,7 +264,7 @@ export default function Admin(){
     {cancelTarget&&<Dialog title="整理券を取り消す" busy={busy} onClose={()=>setCancelTarget(null)}>
       <span className="dialog-symbol red"><XCircle size={24}/></span>
       <h2>No.{cancelTarget.number} を取り消しますか？</h2>
-      <div className="confirm-values"><div><span>回</span><strong>{cancelTarget.round_label}</strong></div><div><span>人数</span><strong>{partyText(cancelTarget)}</strong></div><div><span>発行時刻</span><strong>{time(cancelTarget.created_at)}</strong></div></div>
+      <div className="confirm-values"><div><span>回</span><strong>{cancelTarget.round_label}</strong></div>{cancelTarget.name&&<div><span>名前</span><strong>{cancelTarget.name}</strong></div>}<div><span>人数</span><strong>{partyText(cancelTarget)}</strong></div><div><span>発行時刻</span><strong>{time(cancelTarget.created_at)}</strong></div></div>
       <p className="dialog-description">取り消すと、来場者のスマホにも「スタッフにより取り消された整理券」と表示されます。元に戻せません。</p>
       <div className="dialog-buttons"><button className="button" disabled={busy} onClick={()=>setCancelTarget(null)}>やめる</button><button className="button destructive" disabled={busy} onClick={()=>staffCancel(cancelTarget)}>{busy&&<RefreshCw size={16} className="spin"/>}取り消す</button></div>
     </Dialog>}

@@ -17,6 +17,7 @@ export type Children=Record<ChildKind,number>;
 export const CHILD_KINDS:{key:ChildKind;label:string}[]=[{key:'preschool',label:'未就学児'},{key:'elementary',label:'小学生'},{key:'junior_high',label:'中学生'},{key:'high_school',label:'高校生'}];
 export const WITH_GUARDIAN:ChildKind[]=['preschool','elementary'];
 export const MAX_GUARDIANS=10;
+export const MAX_NAME=30;
 export const emptyChildren=():Children=>({preschool:0,elementary:0,junior_high:0,high_school:0});
 export const childTotal=(c:Children)=>CHILD_KINDS.reduce((s,k)=>s+(c[k.key]??0),0);
 export const needsGuardian=(c:Children)=>WITH_GUARDIAN.some(k=>(c[k]??0)>0);
@@ -24,7 +25,7 @@ export const childSummary=(c:Children|undefined)=>c?CHILD_KINDS.filter(k=>c[k.ke
 
 export type Ticket={
   id:string;token?:string;round_id:number;round_label:string;starts_time:string;starts_at:string;
-  number:number;party_size:number;children?:Children;guardians?:number;status:'active'|'cancelled';created_at:string;
+  number:number;party_size:number;children?:Children;guardians?:number;name?:string;status:'active'|'cancelled';created_at:string;
   cancelled_at:string|null;cancelled_by:'visitor'|'staff'|null;cancellable:boolean;round_finished:boolean;
 };
 

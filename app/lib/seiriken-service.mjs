@@ -8,7 +8,7 @@ const TIME=/^([01]\d|2[0-3]):[0-5]\d$/;
 const DATE=/^(\d{4})-(\d{2})-(\d{2})$/;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const STATUS_LABELS={before:'受付前',open:'受付中',full:'満員',paused:'一時停止中',closed:'受付終了',finished:'終了した回'};
-const LIMITS={capacity:10000,party:20,finish:600,label:40,guardians:10};
+const LIMITS={capacity:10000,party:20,finish:600,label:40,guardians:10,name:30};
 export const CHILD_KINDS=[['preschool','未就学児'],['elementary','小学生'],['junior_high','中学生'],['high_school','高校生']];
 const WITH_GUARDIAN=['preschool','elementary'];
 
@@ -22,6 +22,13 @@ function partyInput(body){
   const needsGuardian=WITH_GUARDIAN.some(key=>children[key]>0);
   const guardians=needsGuardian?int(body?.guardians??0,0,LIMITS.guardians,'保護者の人数'):0;
   return {children,total,guardians};
+}
+function nameInput(value){
+  const name=typeof value==='string'?value.trim():'';
+  if(!name)throw new SeirikenError('お名前を入力してください。');
+  if([...name].length>LIMITS.name)throw new SeirikenError(`お名前は${LIMITS.name}文字以内で入力してください。`);
+  if(/[\u0000-\u001f\u007f]/.test(name))throw new SeirikenError('お名前に使えない文字が含まれています。');
+  return name;
 }
 const childrenOf=t=>({preschool:t.preschool??0,elementary:t.elementary??0,junior_high:t.junior_high??0,high_school:t.high_school??0});
 
@@ -93,7 +100,7 @@ function ticketView(t,round,date,now,withToken){
   const times=roundTimes(round,date);
   return {
     id:t.id,...(withToken?{token:t.cancel_token}:{}),round_id:t.round_id,round_label:round.label,starts_time:round.starts_time,starts_at:times.starts.toISOString(),
-    number:t.number,party_size:t.party_size,children:childrenOf(t),guardians:t.guardians??0,status:t.status,created_at:t.created_at,cancelled_at:t.cancelled_at,cancelled_by:t.cancelled_by,
+    number:t.number,party_size:t.party_size,children:childrenOf(t),guardians:t.guardians??0,name:t.name??'',status:t.status,created_at:t.created_at,cancelled_at:t.cancelled_at,cancelled_by:t.cancelled_by,
     cancellable:t.status==='active'&&now.getTime()<times.starts.getTime(),round_finished:now.getTime()>=times.finishes.getTime()
   };
 }
@@ -109,7 +116,7 @@ export function publicState(sqlite,now){
 
 export function issueTicket(storage,body,now){
   const roundId=int(body?.roundId,1,Number.MAX_SAFE_INTEGER,'回');
-  const party=partyInput(body),partySize=party.total;
+  const party=partyInput(body),partySize=party.total,name=nameInput(body?.name);
   const deviceId=uuid(body?.deviceId,'端末の識別番号'),requestId=uuid(body?.requestId,'送信番号');
   const {sqlite}=storage;
   return storage.transaction(()=>{
@@ -131,9 +138,9 @@ export function issueTicket(storage,body,now){
     if(partySize>round.remaining)throw new SeirikenError(`残りは子ども ${round.remaining} 名分です。人数を減らしてください。`,409,'remaining');
     if(sqlite.prepare("SELECT 1 FROM tickets WHERE round_id=? AND device_id=? AND status='active'").get(roundId,deviceId))throw new SeirikenError('この回の整理券はすでにお持ちです。「整理券を見る」から確認してください。',409,'already');
     const number=sqlite.prepare('SELECT COALESCE(MAX(number),0)+1 AS n FROM tickets WHERE round_id=?').get(roundId).n;
-    const ticket={id:randomUUID(),round_id:roundId,number,party_size:partySize,...party.children,guardians:party.guardians,device_id:deviceId,request_id:requestId,cancel_token:randomBytes(24).toString('base64url'),status:'active',created_at:now.toISOString(),cancelled_at:null,cancelled_by:null};
-    sqlite.prepare('INSERT INTO tickets(id,round_id,number,party_size,preschool,elementary,junior_high,high_school,guardians,device_id,request_id,cancel_token,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(ticket.id,ticket.round_id,ticket.number,ticket.party_size,ticket.preschool,ticket.elementary,ticket.junior_high,ticket.high_school,ticket.guardians,ticket.device_id,ticket.request_id,ticket.cancel_token,ticket.status,ticket.created_at);
+    const ticket={id:randomUUID(),round_id:roundId,number,party_size:partySize,...party.children,guardians:party.guardians,name,device_id:deviceId,request_id:requestId,cancel_token:randomBytes(24).toString('base64url'),status:'active',created_at:now.toISOString(),cancelled_at:null,cancelled_by:null};
+    sqlite.prepare('INSERT INTO tickets(id,round_id,number,party_size,preschool,elementary,junior_high,high_school,guardians,name,device_id,request_id,cancel_token,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(ticket.id,ticket.round_id,ticket.number,ticket.party_size,ticket.preschool,ticket.elementary,ticket.junior_high,ticket.high_school,ticket.guardians,ticket.name,ticket.device_id,ticket.request_id,ticket.cancel_token,ticket.status,ticket.created_at);
     return {ticket:ticketView(ticket,row,date,now,true),replayed:false};
   });
 }
@@ -275,7 +282,7 @@ export function listTickets(sqlite,query,now){
 const csvCell=v=>{const s=String(v??'');return /[",\r\n]/.test(s)||/^[=+\-@\t\r]/.test(s)?`"${(/^[=+\-@\t\r]/.test(s)?"'":'')+s.replace(/"/g,'""')}"`:s;};
 export function ticketsCsv(sqlite){
   const rows=sqlite.prepare('SELECT t.*,r.label,r.starts_time FROM tickets t JOIN rounds r ON r.id=t.round_id ORDER BY r.starts_time,r.id,t.number').all();
-  const head=['回','開演','番号','子ども','未就学児','小学生','中学生','高校生','保護者','状態','発行時刻','取消時刻','取り消した人','整理券ID'];
-  const lines=rows.map(t=>[t.label,t.starts_time,t.number,t.party_size,t.preschool,t.elementary,t.junior_high,t.high_school,t.guardians,t.status==='active'?'有効':'取消',jstTime(t.created_at),t.cancelled_at?jstTime(t.cancelled_at):'',t.cancelled_by==='visitor'?'本人':t.cancelled_by==='staff'?'スタッフ':'',t.id].map(csvCell).join(','));
+  const head=['回','開演','番号','名前','子ども','未就学児','小学生','中学生','高校生','保護者','状態','発行時刻','取消時刻','取り消した人','整理券ID'];
+  const lines=rows.map(t=>[t.label,t.starts_time,t.number,t.name,t.party_size,t.preschool,t.elementary,t.junior_high,t.high_school,t.guardians,t.status==='active'?'有効':'取消',jstTime(t.created_at),t.cancelled_at?jstTime(t.cancelled_at):'',t.cancelled_by==='visitor'?'本人':t.cancelled_by==='staff'?'スタッフ':'',t.id].map(csvCell).join(','));
   return '\uFEFF'+[head.join(','),...lines].join('\r\n')+'\r\n';
 }
