@@ -25,7 +25,7 @@ async function call(base,path,body,headers={}){
   return {status:r.status,headers:r.headers,value:r.headers.get('content-type')?.includes('json')?await r.json():await r.text()};
 }
 const admin=(app,body)=>call(app.url,'api/admin/operation',body);
-const issue=(app,roundId,partySize=1,deviceId=randomUUID(),requestId=randomUUID())=>call(app.url,'api/public/issue',{roundId,children:{high_school:partySize},name:'紅華 太郎',deviceId,requestId});
+const issue=(app,roundId,partySize=1,deviceId=randomUUID(),requestId=randomUUID())=>call(app.url,'api/public/issue',{roundId,children:{high_school:partySize},deviceId,requestId});
 const publicRound=async(app,id)=>(await call(app.url,'api/public/state')).value.rounds.find(r=>r.id===id);
 async function addRound(app,extra={}){
   const r=await admin(app,{action:'create',label:'10:00の回',startsTime:'10:00',opensTime:'09:00',closesTime:'10:00',capacity:10,maxParty:4,finishAfterMinutes:30,...extra});
@@ -84,14 +84,10 @@ test('人数で定員を数え、1枚の上限・端末ごとの制限・再送�
 
 test('子どもの区分と保護者: 定員と1枚の上限は子どもだけで数え、保護者は未就学児・小学生がいるときだけ記録する',async t=>{
   const {app}=await setup(t);const id=await addRound(app,{capacity:6,maxParty:3});
-  const send=(body)=>call(app.url,'api/public/issue',{roundId:id,name:'山田 花子',deviceId:randomUUID(),requestId:randomUUID(),...body});
-  const a=await send({children:{preschool:1,elementary:2},guardians:2,name:'  =紅華, "花子"  '});
+  const send=(body)=>call(app.url,'api/public/issue',{roundId:id,deviceId:randomUUID(),requestId:randomUUID(),...body});
+  const a=await send({children:{preschool:1,elementary:2},guardians:2,name:'紅華 花子'});
   assert.equal(a.status,200,JSON.stringify(a.value));
-  assert.equal(a.value.ticket.name,'=紅華, "花子"');
-  assert.equal((await send({children:{high_school:1},name:'   '})).status,400);
-  assert.equal((await send({children:{high_school:1},name:undefined})).status,400);
-  assert.equal((await send({children:{high_school:1},name:'あ'.repeat(31)})).status,400);
-  assert.equal((await send({children:{high_school:1},name:'a\nb'})).status,400);
+  assert.equal('name' in a.value.ticket,false);
   assert.equal(a.value.ticket.party_size,3);assert.equal(a.value.ticket.guardians,2);
   assert.deepEqual(a.value.ticket.children,{preschool:1,elementary:2,junior_high:0,high_school:0});
   assert.equal((await publicRound(app,id)).remaining,3);
@@ -109,14 +105,15 @@ test('子どもの区分と保護者: 定員と1枚の上限は子どもだけ�
   assert.equal(r.used_people,6);assert.equal(r.used_guardians,2);assert.equal(state.totals.guardians,2);assert.equal(r.status,'full');
   const list=(await call(app.url,`api/admin/tickets?round=${id}`)).value.tickets;
   assert.deepEqual(list.map(x=>x.guardians),[0,0,2]);
-  assert.deepEqual(list.map(x=>x.name),['山田 花子','山田 花子','=紅華, "花子"']);
+  assert.ok(list.every(x=>!('name' in x)));
   const csv=(await (await fetch(app.url+'api/admin/csv')).text()).replace(/^\uFEFF/,'').split('\r\n');
-  assert.equal(csv[0],'回,開演,番号,名前,子ども,未就学児,小学生,中学生,高校生,保護者,状態,発行時刻,取消時刻,取り消した人,整理券ID');
-  assert.match(csv[1],/^10:00の回,10:00,1,"'=紅華, ""花子""",3,1,2,0,0,2,有効,/);
-  assert.match(csv[2],/^10:00の回,10:00,2,山田 花子,2,0,0,1,1,0,有効,/);
+  assert.equal(csv[0],'回,開演,番号,子ども,未就学児,小学生,中学生,高校生,保護者,状態,発行時刻,取消時刻,取り消した人,整理券ID');
+  assert.match(csv[1],/^10:00の回,10:00,1,3,1,2,0,0,2,有効,/);
+  assert.match(csv[2],/^10:00の回,10:00,2,2,0,0,1,1,0,有効,/);
+  assert.equal(app.storage.sqlite.prepare("SELECT COUNT(*) AS n FROM tickets WHERE name<>''").get().n,0);
 });
 
-test('v1のデータは、起動時に区分・保護者・名前の列を追加して引き継ぐ',async t=>{
+test('v1のデータは、起動時に区分・保護者の列を追加して引き継ぐ',async t=>{
   const dir=mkdtempSync(join(tmpdir(),'seiriken-old-'));
   t.after(()=>rmSync(dir,{recursive:true,force:true}));
   const schema=readFileSync(new URL('../backend/schema.sql',import.meta.url),'utf8');
@@ -134,9 +131,31 @@ test('v1のデータは、起動時に区分・保護者・名前の列を追加
   try{
     const row=storage.sqlite.prepare('SELECT party_size,preschool,guardians,name FROM tickets').get();
     assert.deepEqual({...row},{party_size:2,preschool:0,guardians:0,name:''});
-    assert.equal(storage.sqlite.prepare('SELECT MAX(version) AS v FROM app_migrations').get().v,3);
+    assert.equal(storage.sqlite.prepare('SELECT MAX(version) AS v FROM app_migrations').get().v,4);
     assert.throws(()=>storage.sqlite.prepare('UPDATE tickets SET guardians=3').run(),/取消以外/);
     assert.throws(()=>storage.sqlite.prepare("UPDATE tickets SET name='x'").run(),/取消以外/);
+  }finally{storage.close();}
+});
+
+test('v3で記録した名前は、起動時に消す',async t=>{
+  const dir=mkdtempSync(join(tmpdir(),'seiriken-v3-'));
+  t.after(()=>rmSync(dir,{recursive:true,force:true}));
+  const {createHash}=await import('node:crypto');
+  const {fileURLToPath}=await import('node:url');
+  const backend=new URL('../backend/',import.meta.url);
+  const files=['schema.sql','migrations/002_children.sql','migrations/003_name.sql'].map(f=>readFileSync(new URL(f,backend),'utf8'));
+  const old=new DatabaseSync(join(dir,'seiriken.sqlite3'));
+  old.exec('CREATE TABLE app_migrations (version INTEGER PRIMARY KEY, sha256 TEXT NOT NULL); CREATE TABLE app_metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL);');
+  files.forEach((sql,i)=>{old.exec(sql);old.prepare('INSERT INTO app_migrations VALUES(?,?)').run(i+1,createHash('sha256').update(sql).digest('hex'));});
+  old.exec("INSERT INTO rounds(label,starts_time,opens_time,closes_time,capacity_people,created_at,updated_at) VALUES('旧','10:00','09:00','10:00',10,'x','x')");
+  old.exec("INSERT INTO tickets(id,round_id,number,party_size,high_school,name,device_id,request_id,cancel_token,created_at) VALUES('00000000-0000-4000-8000-000000000001',1,1,1,1,'紅華 花子','d','00000000-0000-4000-8000-000000000002','tok','2026-11-03T00:00:00.000Z')");
+  old.close();
+  const {openStorage}=await import('../backend/storage.mjs');
+  const storage=openStorage(dir,fileURLToPath(new URL('schema.sql',backend)));
+  try{
+    assert.equal(storage.sqlite.prepare('SELECT name FROM tickets').get().name,'');
+    storage.sqlite.prepare("UPDATE tickets SET status='cancelled',cancelled_at='x',cancelled_by='staff'").run();
+    assert.equal(storage.sqlite.prepare('SELECT status FROM tickets').get().status,'cancelled');
   }finally{storage.close();}
 });
 
@@ -174,7 +193,7 @@ test('同時に400件の申し込みが来ても、番号の重複と定員超�
   // Windows caps the TCP accept queue (~200), so 400 requests share 100 concurrent connections.
   const agent=new Agent({keepAlive:true,maxSockets:100});t.after(()=>agent.destroy());
   const sizes=Array.from({length:400},(_,i)=>i%4+1);
-  const results=await Promise.all(sizes.map(n=>rawIssue(app,agent,{roundId:id,children:{elementary:n},guardians:1,name:'同時',deviceId:randomUUID(),requestId:randomUUID()})));
+  const results=await Promise.all(sizes.map(n=>rawIssue(app,agent,{roundId:id,children:{elementary:n},guardians:1,deviceId:randomUUID(),requestId:randomUUID()})));
   const ok=results.filter(r=>r.status===200).map(r=>r.value.ticket);
   assert.ok(results.every(r=>r.status===200||r.status===409),JSON.stringify(results.find(r=>r.status!==200&&r.status!==409)?.value));
   const people=ok.reduce((s,t)=>s+t.party_size,0);
@@ -198,7 +217,7 @@ test('運営操作の検証: 発行済み人数より少ない定員・発行済
   assert.equal((await publicRound(app,id)).status,'before');
   const spare=await addRound(app,{label:'予備'});
   assert.equal((await admin(app,{action:'delete',id:spare})).status,200);
-  assert.equal((await call(app.url,'api/public/issue',{roundId:id,children:{high_school:1},name:'x',deviceId:'x',requestId:randomUUID()})).status,400);
+  assert.equal((await call(app.url,'api/public/issue',{roundId:id,children:{high_school:1},deviceId:'x',requestId:randomUUID()})).status,400);
   const noHeader=await fetch(app.url+'api/public/issue',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
   assert.equal(noHeader.status,403);
   const foreign=await call(app.url,'api/admin/operation',{action:'pause',id},{Origin:'http://evil.example'});

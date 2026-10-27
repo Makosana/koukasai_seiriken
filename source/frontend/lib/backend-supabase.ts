@@ -17,7 +17,7 @@ const networkError=()=>new ApiError('通信を確認できませんでした。�
 type RpcError={message:string;code?:string;hint?:string|null};
 function toApiError(error:RpcError){
   const code=error.hint||'';
-  if(code&&code in STATUS||['before','paused','closed','full','remaining','already','started','request_conflict'].includes(code))
+  if(code&&code in STATUS||['before','paused','closed','full','remaining','already','started','request_conflict','checked_in','wrong_round','cancelled','finished','invalid_code'].includes(code))
     return new ApiError(error.message,STATUS[code]??409,code);
   if(error.code==='42501'||error.code==='PGRST301'||error.code==='PGRST303')return new ApiError('運営画面を使うにはログインしてください。',401,'login');
   if(!error.code)return networkError();
@@ -38,11 +38,11 @@ function stamp(){
   const p=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date()).map(x=>[x.type,x.value]));
   return `${p.year}${p.month}${p.day}-${p.hour}${p.minute}${p.second}`;
 }
-type ExportRow={label:string;starts_time:string;number:number;name?:string;party_size:number;preschool?:number;elementary?:number;junior_high?:number;high_school?:number;guardians?:number;status:string;created_at:string;cancelled_at:string|null;cancelled_by:string|null;id:string};
+type ExportRow={label:string;starts_time:string;number:number;party_size:number;preschool?:number;elementary?:number;junior_high?:number;high_school?:number;guardians?:number;status:string;created_at:string;checked_in_at?:string|null;cancelled_at:string|null;cancelled_by:string|null;id:string};
 
 export const supabaseBackend:Backend={
   publicState:()=>rpc<PublicState>('public_state'),
-  issue:input=>rpc('issue_ticket',{p_round_id:input.roundId,p_children:input.children,p_guardians:input.guardians,p_name:input.name,p_device_id:input.deviceId,p_request_id:input.requestId},25000),
+  issue:input=>rpc('issue_ticket',{p_round_id:input.roundId,p_children:input.children,p_guardians:input.guardians,p_device_id:input.deviceId,p_request_id:input.requestId},25000),
   lookup:items=>rpc('lookup_tickets',{p_items:items}),
   findRequest:(requestId,deviceId)=>rpc<{ticket:Ticket|null}>('find_request',{p_request_id:requestId,p_device_id:deviceId}),
   cancel:(id,token)=>rpc('cancel_ticket',{p_id:id,p_token:token}),
@@ -68,10 +68,11 @@ export const supabaseBackend:Backend={
     return (await rpc<{tickets:AdminTicket[]}>('admin_list_tickets',{p_round_id:roundId,p_number:number?Number(number):null})).tickets;
   },
   async adminCancel(id){await rpc('admin_cancel',{p_id:id});},
+  checkin:input=>rpc('admin_checkin',{p_round_id:input.roundId,p_code:input.code??null,p_number:input.number??null}),
   async exportCsv(){
     const rows=await rpc<ExportRow[]>('admin_export_tickets',undefined,60000);
-    const head=['回','開演','番号','名前','子ども','未就学児','小学生','中学生','高校生','保護者','状態','発行時刻','取消時刻','取り消した人','整理券ID'];
-    const lines=rows.map(t=>[t.label,t.starts_time,t.number,t.name??'',t.party_size,t.preschool??0,t.elementary??0,t.junior_high??0,t.high_school??0,t.guardians??0,t.status==='active'?'有効':'取消',jstTime(t.created_at),t.cancelled_at?jstTime(t.cancelled_at):'',t.cancelled_by==='visitor'?'本人':t.cancelled_by==='staff'?'スタッフ':'',t.id].map(csvCell).join(','));
+    const head=['回','開演','番号','子ども','未就学児','小学生','中学生','高校生','保護者','状態','受付','発行時刻','受付時刻','取消時刻','取り消した人','整理券ID'];
+    const lines=rows.map(t=>[t.label,t.starts_time,t.number,t.party_size,t.preschool??0,t.elementary??0,t.junior_high??0,t.high_school??0,t.guardians??0,t.status==='active'?'有効':'取消',t.checked_in_at?'受付済み':'',jstTime(t.created_at),t.checked_in_at?jstTime(t.checked_in_at):'',t.cancelled_at?jstTime(t.cancelled_at):'',t.cancelled_by==='visitor'?'本人':t.cancelled_by==='staff'?'スタッフ':'',t.id].map(csvCell).join(','));
     const text='\uFEFF'+[head.join(','),...lines].join('\r\n')+'\r\n';
     return {blob:new Blob([text],{type:'text/csv;charset=utf-8'}),filename:`seiriken-tickets-${stamp()}.csv`};
   },

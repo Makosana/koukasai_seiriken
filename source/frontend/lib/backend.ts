@@ -2,8 +2,9 @@ import {api,ApiError} from './api';
 import type {AdminState,AdminTicket,Children,PublicState,Ticket} from './types';
 
 export type Saved={id:string;token:string;ticket?:Ticket};
-export type IssueInput={roundId:number;children:Children;guardians:number;name:string;deviceId:string;requestId:string};
+export type IssueInput={roundId:number;children:Children;guardians:number;deviceId:string;requestId:string};
 export type LoginInput={code?:string;email?:string;password?:string};
+export type CheckinInput={roundId:number;code?:string;number?:number};
 
 export type Backend={
   publicState():Promise<PublicState>;
@@ -17,6 +18,7 @@ export type Backend={
   adminOperation(body:Record<string,unknown>):Promise<void>;
   listTickets(roundId:number,number?:string):Promise<AdminTicket[]>;
   adminCancel(id:string):Promise<void>;
+  checkin(input:CheckinInput):Promise<{ticket:AdminTicket;replayed:boolean}>;
   exportCsv():Promise<{blob:Blob;filename:string}>;
   backup():Promise<string>;
 };
@@ -38,6 +40,7 @@ const localBackend:Backend={
     return (await api<{tickets:AdminTicket[]}>(`/api/admin/tickets?${q}`)).tickets;
   },
   async adminCancel(id){await api('/api/admin/cancel',{id});},
+  async checkin(){throw new ApiError('入場受付はオンライン版（Supabase）だけで使えます。',400,'invalid');},
   async exportCsv(){
     let r:Response;
     try{r=await fetch('/api/admin/csv',{cache:'no-store'});}

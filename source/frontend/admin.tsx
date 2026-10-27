@@ -1,23 +1,26 @@
-import {useCallback,useEffect,useRef,useState,type FormEvent,type ReactNode} from 'react';
-import QRCode from 'qrcode';
-import {Ticket as TicketIcon,CalendarClock,ListOrdered,ChartNoAxesCombined,QrCode,Plus,Pencil,Trash2,Pause,Play,RefreshCw,Search,TriangleAlert,ChevronRight,Download,Printer,KeyRound,PanelLeftClose,PanelLeftOpen,ShieldCheck,Wifi,DatabaseBackup,LockKeyhole,Users,XCircle,ExternalLink,LogOut,Cloud} from 'lucide-react';
+import {useCallback,useEffect,useRef,useState,type CSSProperties,type FormEvent,type ReactNode} from 'react';
+import {Ticket as TicketIcon,CalendarClock,ListOrdered,ChartNoAxesCombined,ChartColumn,QrCode,ScanQrCode,Plus,Pencil,Trash2,Pause,Play,RefreshCw,Search,TriangleAlert,ChevronRight,Download,Printer,KeyRound,PanelLeftClose,PanelLeftOpen,ShieldCheck,Wifi,DatabaseBackup,LockKeyhole,Users,XCircle,ExternalLink,LogOut,Cloud,CircleCheck} from 'lucide-react';
 import {ApiError,fmt} from './lib/api';
 import {backend,MODE} from './lib/backend';
 import type {AdminRound,AdminState,AdminTicket} from './lib/types';
 import {STATUS_LABELS,childSummary} from './lib/types';
 import {content} from './content';
-import {Dialog,Toast} from './ui';
+import {Dialog,Toast,useQr} from './ui';
 import {tone,partyText} from './visitor';
+import CheckinTab from './checkin';
 
-type Tab='rounds'|'tickets'|'summary'|'poster';
+type Tab='rounds'|'checkin'|'tickets'|'summary'|'poster';
 type RoundForm={id?:number;label:string;startsTime:string;opensTime:string;closesTime:string;capacity:string;maxParty:string;finishAfterMinutes:string};
-const tabs=[{id:'rounds' as Tab,label:'回の管理',icon:CalendarClock},{id:'tickets' as Tab,label:'整理券の一覧',icon:ListOrdered},{id:'summary' as Tab,label:'集計・出力',icon:ChartNoAxesCombined},{id:'poster' as Tab,label:'掲示用QR',icon:QrCode}];
+const CHECKIN=MODE==='supabase';
+const tabs=[{id:'rounds' as Tab,label:'回の管理',icon:CalendarClock},...(CHECKIN?[{id:'checkin' as Tab,label:'入場受付',icon:ScanQrCode}]:[]),{id:'tickets' as Tab,label:'整理券の一覧',icon:ListOrdered},{id:'summary' as Tab,label:'集計・出力',icon:ChartNoAxesCombined},{id:'poster' as Tab,label:'掲示用QR',icon:QrCode}];
 const titles:Record<Tab,{title:string;subtitle:string;kicker:string}>={
   rounds:{title:'回の管理',subtitle:'回ごとの定員と受付時間を登録します。受付は時間になると自動で始まり、満員か終了時刻で締め切ります。',kicker:'ROUNDS'},
+  checkin:{title:'入場受付',subtitle:'iPadなどのカメラで来場者の整理券のQRコードを読み取ると、受付済みになります。',kicker:'CHECK-IN'},
   tickets:{title:'整理券の一覧',subtitle:'入場口で番号を照合したり、疑わしい整理券を取り消したりできます。',kicker:'TICKETS'},
   summary:{title:'集計・出力',subtitle:'配布した枚数と人数を確認し、CSVで記録を残します。',kicker:'SUMMARY'},
   poster:{title:'掲示用QR',subtitle:'会場に貼るQRコードを表示・印刷します。',kicker:'POSTER'}
 };
+const tabFromHash=():Tab=>CHECKIN&&location.hash==='#/admin/checkin'?'checkin':'rounds';
 const WIFI_KEY='seiriken-admin-wifi-v1';
 const time=(iso:string)=>new Date(iso).toLocaleTimeString('ja-JP',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
 const isTime=(v:string)=>/^([01]\d|2[0-3]):[0-5]\d$/.test(v);
@@ -32,7 +35,7 @@ export default function Admin(){
   const [state,setState]=useState<AdminState|null>(null);
   const [auth,setAuth]=useState<'checking'|'ok'|'login'>('checking');
   const [connection,setConnection]=useState<'loading'|'ok'|'error'>('loading');
-  const [tab,setTab]=useState<Tab>('rounds'),[navOpen,setNavOpen]=useState(false);
+  const [tab,setTab]=useState<Tab>(tabFromHash),[navOpen,setNavOpen]=useState(false);
   const [busy,setBusy]=useState(false),[toast,setToast]=useState<{text:string;error?:boolean}|null>(null);
   const [code,setCode]=useState(''),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[loginError,setLoginError]=useState('');
   const [form,setForm]=useState<RoundForm|null>(null),[formError,setFormError]=useState('');
@@ -64,7 +67,8 @@ export default function Admin(){
   },[ticketRound,numberQuery,notify]);
   const lastNumber=state?.rounds.find(r=>r.id===ticketRound)?.last_number;
   const cancelledCount=state?.rounds.find(r=>r.id===ticketRound)?.cancelled_count;
-  useEffect(()=>{if(tab==='tickets')loadTickets();},[tab,loadTickets,lastNumber,cancelledCount]);
+  const checkedCount=state?.rounds.find(r=>r.id===ticketRound)?.checked_in_count;
+  useEffect(()=>{if(tab==='tickets')loadTickets();},[tab,loadTickets,lastNumber,cancelledCount,checkedCount]);
 
   async function login(e:FormEvent){
     e.preventDefault();setBusy(true);setLoginError('');
@@ -116,7 +120,10 @@ export default function Admin(){
     catch(e){notify(e instanceof Error?e.message:'バックアップを作成できませんでした。',true);}
     finally{setBusy(false);}
   }
-  function chooseTab(id:Tab){setTab(id);setNavOpen(false);}
+  function chooseTab(id:Tab){
+    setTab(id);setNavOpen(false);
+    if(CHECKIN)history.replaceState(null,'',location.pathname+location.search+(id==='checkin'?'#/admin/checkin':'#/admin'));
+  }
 
   if(auth==='login'&&MODE==='supabase')return <div className="login-shell"><form className="login-card" onSubmit={login}>
     <span className="brand-icon"><KeyRound size={24}/></span>
@@ -194,20 +201,19 @@ export default function Admin(){
           </section>
         </>}
 
-        {tab==='tickets'&&<section className="panel"><div className="panel-heading"><div><h2><ListOrdered size={18}/>整理券</h2>{selected&&<p className="muted tiny">有効 {fmt(selected.active_count)} 枚・子ども {fmt(selected.used_people)} 名・保護者 {fmt(selected.used_guardians??0)} 名／取消 {fmt(selected.cancelled_count)} 枚／最後の番号 No.{selected.last_number}</p>}</div><button className="icon-button" onClick={()=>loadTickets()} aria-label="一覧を更新"><RefreshCw size={18} className={listBusy?'spin':''}/></button></div>
+        {tab==='tickets'&&<section className="panel"><div className="panel-heading"><div><h2><ListOrdered size={18}/>整理券</h2>{selected&&<p className="muted tiny">有効 {fmt(selected.active_count)} 枚・子ども {fmt(selected.used_people)} 名・保護者 {fmt(selected.used_guardians??0)} 名{CHECKIN?`（うち受付済み ${fmt(selected.checked_in_count??0)} 枚）`:''}／取消 {fmt(selected.cancelled_count)} 枚／最後の番号 No.{selected.last_number}</p>}</div><button className="icon-button" onClick={()=>loadTickets()} aria-label="一覧を更新"><RefreshCw size={18} className={listBusy?'spin':''}/></button></div>
           <div className="history-tools">
             <select className="filter-select" value={ticketRound??''} onChange={e=>{setTicketRound(Number(e.target.value));setNumberDraft('');setNumberQuery('');}} aria-label="回を選ぶ">{rounds.map(r=><option key={r.id} value={r.id}>{r.label}（開演 {r.starts_time}）</option>)}</select>
             <form className="search-field" onSubmit={e=>{e.preventDefault();setNumberQuery(numberDraft.trim());}}><Search size={18}/><input inputMode="numeric" placeholder="番号で照合（例: 23）" aria-label="番号で検索" value={numberDraft} onChange={e=>/^\d{0,6}$/.test(e.target.value)&&setNumberDraft(e.target.value)}/>{numberQuery&&<button type="button" onClick={()=>{setNumberDraft('');setNumberQuery('');}}>解除</button>}<button type="submit">照合</button></form>
           </div>
-          {rounds.length?<div className="table-scroll"><table><thead><tr><th>番号</th><th>名前</th><th>子ども</th><th>保護者</th><th>状態</th><th>発行時刻</th><th>端末</th><th className="right">操作</th></tr></thead><tbody>{list.map(t=><tr key={t.id} className={t.status==='cancelled'?'voided':''}>
+          {rounds.length?<div className="table-scroll"><table><thead><tr><th>番号</th><th>子ども</th><th>保護者</th><th>状態</th><th>発行時刻</th><th>端末</th><th className="right">操作</th></tr></thead><tbody>{list.map(t=><tr key={t.id} className={t.status==='cancelled'?'voided':''}>
             <td><strong className="ticket-no">No.{t.number}</strong></td>
-            <td>{t.name||<span className="muted">—</span>}</td>
             <td className="mono">{t.party_size} 名{t.children&&childSummary(t.children)&&<span className="table-note">{childSummary(t.children)}</span>}</td>
             <td className="mono">{t.guardians?`${t.guardians} 名`:'—'}</td>
-            <td><span className={`kind-pill ${t.status==='active'?'sale':'void'}`}>{t.status==='active'?'有効':t.cancelled_by==='staff'?'取消（スタッフ）':'取消（本人）'}</span>{t.cancelled_at&&<span className="table-note">{time(t.cancelled_at)}</span>}</td>
+            <td>{t.status==='active'&&t.checked_in_at?<><span className="kind-pill checked">受付済み</span><span className="table-note">{time(t.checked_in_at)}</span></>:<><span className={`kind-pill ${t.status==='active'?'sale':'void'}`}>{t.status==='active'?(CHECKIN?'有効（未受付）':'有効'):t.cancelled_by==='staff'?'取消（スタッフ）':'取消（本人）'}</span>{t.cancelled_at&&<span className="table-note">{time(t.cancelled_at)}</span>}</>}</td>
             <td className="mono">{time(t.created_at)}</td>
             <td className="mono muted">{t.device}</td>
-            <td className="right">{t.status==='active'&&<button className="button small void-button" disabled={busy} onClick={()=>setCancelTarget(t)}>取り消す</button>}</td>
+            <td className="right">{t.status==='active'&&!t.checked_in_at&&<button className="button small void-button" disabled={busy} onClick={()=>setCancelTarget(t)}>取り消す</button>}</td>
           </tr>)}</tbody></table>
           {listBusy&&!list.length&&<div className="table-loading"><RefreshCw size={16} className="spin"/>読み込み中</div>}
           {!listBusy&&!list.length&&<div className="empty"><div className="empty-icon"><TicketIcon size={26}/></div><strong>{numberQuery?`No.${numberQuery} の整理券はありません`:'まだ整理券がありません'}</strong><p>{numberQuery?'番号と回を確かめてください。存在しない番号の場合は、偽造の可能性があります。':'来場者が整理券を取ると、ここに表示されます。'}</p></div>}
@@ -215,15 +221,19 @@ export default function Admin(){
           <div className="table-bottom"><ShieldCheck size={14}/>端末欄は同じスマホかどうかを見分けるための記号です。<span>{list.length}件を表示</span></div>
         </section>}
 
+        {tab==='checkin'&&CHECKIN&&<CheckinTab rounds={rounds} onChecked={()=>{refresh();}} onLogin={()=>setAuth('login')}/>}
+
         {tab==='summary'&&<>
           <section className="stats-grid">
             <Stat label="発行済み（有効）" value={state?.totals.tickets??0} unit="枚" icon={<TicketIcon size={18}/>} color="peach" foot="取消分を除く"/>
             <Stat label="入場予定（子ども）" value={state?.totals.people??0} unit="名" icon={<Users size={18}/>} color="green" foot={`このほか保護者 ${fmt(state?.totals.guardians??0)} 名`}/>
-            <Stat label="残り人数" value={state?.totals.remaining??0} unit="名" icon={<ListOrdered size={18}/>} color="blue" foot={`定員合計 ${fmt(state?.totals.capacity??0)} 名`}/>
+            {CHECKIN?<Stat label="受付済み（子ども）" value={state?.totals.checked_in_people??0} unit="名" icon={<CircleCheck size={18}/>} color="blue" foot={`整理券 ${fmt(state?.totals.checked_in??0)} 枚・保護者 ${fmt(state?.totals.checked_in_guardians??0)} 名`}/>
+            :<Stat label="残り人数" value={state?.totals.remaining??0} unit="名" icon={<ListOrdered size={18}/>} color="blue" foot={`定員合計 ${fmt(state?.totals.capacity??0)} 名`}/>}
             <Stat label="取消" value={state?.totals.cancelled??0} unit="枚" icon={<XCircle size={18}/>} color="purple" foot="本人とスタッフの合計"/>
           </section>
+          {rounds.length>0&&<RoundChart rounds={rounds}/>}
           <section className="panel"><div className="panel-heading"><h2><span className="heading-mark"/>回ごとの集計</h2><button className="button small" disabled={busy} onClick={downloadCsv}><Download size={16}/>CSVを出力</button></div>
-            <div className="table-scroll"><table><thead><tr><th>回</th><th>開演</th><th>状態</th><th className="right">有効</th><th className="right">子ども</th><th className="right">保護者</th><th className="right">取消</th><th className="right">残り</th><th className="right">定員</th></tr></thead><tbody>{rounds.map(r=><tr key={r.id}><td><span className={`round-dot ${tone(r.id)}`}/>{r.label}</td><td className="mono">{r.starts_time}</td><td><span className={`status-chip status-${r.status}`}><span/>{STATUS_LABELS[r.status]}</span></td><td className="right mono">{fmt(r.active_count)} 枚</td><td className="right mono">{fmt(r.used_people)} 名</td><td className="right mono">{fmt(r.used_guardians??0)} 名</td><td className="right mono">{fmt(r.cancelled_count)} 枚</td><td className="right mono">{fmt(r.remaining)} 名</td><td className="right mono">{fmt(r.capacity_people)} 名</td></tr>)}</tbody></table>{!rounds.length&&<div className="empty"><strong>まだ回がありません</strong></div>}</div>
+            <div className="table-scroll"><table><thead><tr><th>回</th><th>開演</th><th>状態</th><th className="right">有効</th><th className="right">子ども</th><th className="right">保護者</th>{CHECKIN&&<th className="right">受付済み</th>}<th className="right">取消</th><th className="right">残り</th><th className="right">定員</th></tr></thead><tbody>{rounds.map(r=><tr key={r.id}><td><span className={`round-dot ${tone(r.id)}`}/>{r.label}</td><td className="mono">{r.starts_time}</td><td><span className={`status-chip status-${r.status}`}><span/>{STATUS_LABELS[r.status]}</span></td><td className="right mono">{fmt(r.active_count)} 枚</td><td className="right mono">{fmt(r.used_people)} 名</td><td className="right mono">{fmt(r.used_guardians??0)} 名</td>{CHECKIN&&<td className="right mono">{fmt(r.checked_in_count??0)} 枚<span className="table-note">子ども {fmt(r.checked_in_people??0)} 名・保護者 {fmt(r.checked_in_guardians??0)} 名</span></td>}<td className="right mono">{fmt(r.cancelled_count)} 枚</td><td className="right mono">{fmt(r.remaining)} 名</td><td className="right mono">{fmt(r.capacity_people)} 名</td></tr>)}</tbody></table>{!rounds.length&&<div className="empty"><strong>まだ回がありません</strong></div>}</div>
           </section>
           {MODE==='supabase'?<section className="panel backup-panel"><div className="backup-heading"><span className="backup-icon"><Cloud size={23}/></span><div><h2>記録の保存</h2><p>整理券の記録はSupabaseのデータベースに保存されます。終了後は「CSVを出力」で手元にも残してください。</p></div></div><div className="backup-buttons"><button className="button" disabled={busy} onClick={downloadCsv}><Download size={16}/>CSVを出力</button></div></section>
           :<section className="panel backup-panel"><div className="backup-heading"><span className="backup-icon"><DatabaseBackup size={23}/></span><div><h2>記録とバックアップ</h2><p>起動時・20件ごと・5分ごと（変更があれば）・終了時に、backups フォルダーへ自動で保存します。</p><small className="muted">直近の自動バックアップ：{state?.server.lastBackup?time(state.server.lastBackup):'まだありません'}{state?.server.databasePath?`　保存先：${state.server.databasePath}`:''}</small></div></div><div className="backup-buttons"><button className="button" disabled={busy} onClick={downloadCsv}><Download size={16}/>CSVを出力</button><button className="button dark" disabled={busy} onClick={manualBackup}><DatabaseBackup size={16}/>今すぐバックアップ</button></div></section>}
@@ -264,7 +274,7 @@ export default function Admin(){
     {cancelTarget&&<Dialog title="整理券を取り消す" busy={busy} onClose={()=>setCancelTarget(null)}>
       <span className="dialog-symbol red"><XCircle size={24}/></span>
       <h2>No.{cancelTarget.number} を取り消しますか？</h2>
-      <div className="confirm-values"><div><span>回</span><strong>{cancelTarget.round_label}</strong></div>{cancelTarget.name&&<div><span>名前</span><strong>{cancelTarget.name}</strong></div>}<div><span>人数</span><strong>{partyText(cancelTarget)}</strong></div><div><span>発行時刻</span><strong>{time(cancelTarget.created_at)}</strong></div></div>
+      <div className="confirm-values"><div><span>回</span><strong>{cancelTarget.round_label}</strong></div><div><span>人数</span><strong>{partyText(cancelTarget)}</strong></div><div><span>発行時刻</span><strong>{time(cancelTarget.created_at)}</strong></div></div>
       <p className="dialog-description">取り消すと、来場者のスマホにも「スタッフにより取り消された整理券」と表示されます。元に戻せません。</p>
       <div className="dialog-buttons"><button className="button" disabled={busy} onClick={()=>setCancelTarget(null)}>やめる</button><button className="button destructive" disabled={busy} onClick={()=>staffCancel(cancelTarget)}>{busy&&<RefreshCw size={16} className="spin"/>}取り消す</button></div>
     </Dialog>}
@@ -276,15 +286,23 @@ function Stat({label,value,unit,icon,color,foot}:{label:string;value:number;unit
   return <div className="stat-card"><div className="stat-top"><span>{label}</span><span className={`stat-icon ${color}`}>{icon}</span></div><div className="stat-number">{fmt(value)}<small>{unit}</small></div><div className="stat-foot">{foot}</div></div>;
 }
 
-function useQr(text:string){
-  const [src,setSrc]=useState('');
-  useEffect(()=>{
-    let live=true;
-    if(!text){setSrc('');return;}
-    QRCode.toString(text,{type:'svg',margin:1,errorCorrectionLevel:'M',color:{dark:'#252b35',light:'#ffffff'}}).then(svg=>{if(live)setSrc('data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg));}).catch(()=>{if(live)setSrc('');});
-    return()=>{live=false;};
-  },[text]);
-  return src;
+function RoundChart({rounds}:{rounds:AdminRound[]}){
+  const series=[
+    {label:'定員',cls:'bar-capacity',value:(r:AdminRound)=>r.capacity_people},
+    {label:'整理券を取った人数',cls:'bar-issued',value:(r:AdminRound)=>r.used_people},
+    ...(CHECKIN?[{label:'受付が済んだ人数',cls:'bar-checked',value:(r:AdminRound)=>r.checked_in_people??0}]:[])
+  ];
+  const max=Math.max(1,...rounds.flatMap(r=>series.map(s=>s.value(r))));
+  return <section className="panel chart-panel">
+    <div className="panel-heading"><h2><ChartColumn size={18}/>回ごとのグラフ（子どもの人数）</h2><div className="chart-legend">{series.map(s=><span key={s.cls}><i className={s.cls}/>{s.label}</span>)}</div></div>
+    <div className="chart-scroll"><div className="chart" style={{'--bars':series.length} as CSSProperties}>
+      {rounds.map(r=><div key={r.id} className="chart-group">
+        <div className="chart-bars">{series.map(s=>{const v=s.value(r);return <div key={s.cls} className={`chart-bar ${s.cls}`} style={{height:`${v/max*100}%`}} title={`${r.label}：${s.label} ${fmt(v)} 名`}><span>{fmt(v)}</span></div>;})}</div>
+        <div className="chart-label"><span className={`round-dot ${tone(r.id)}`}/><strong>{r.label}</strong><small>{r.starts_time}</small></div>
+      </div>)}
+    </div></div>
+    <div className="table-bottom"><ShieldCheck size={14}/>保護者は定員に数えないため、グラフにも入れていません。<span>5秒ごとに更新</span></div>
+  </section>;
 }
 
 function PosterTab({state}:{state:AdminState|null}){

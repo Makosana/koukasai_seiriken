@@ -1,5 +1,17 @@
-import {useEffect,useRef,type ReactNode} from 'react';
+import {useEffect,useRef,useState,type ReactNode} from 'react';
+import QRCode from 'qrcode';
 import {X} from 'lucide-react';
+
+export function useQr(text:string){
+  const [src,setSrc]=useState('');
+  useEffect(()=>{
+    let live=true;
+    if(!text){setSrc('');return;}
+    QRCode.toString(text,{type:'svg',margin:1,errorCorrectionLevel:'M',color:{dark:'#252b35',light:'#ffffff'}}).then(svg=>{if(live)setSrc('data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg));}).catch(()=>{if(live)setSrc('');});
+    return()=>{live=false;};
+  },[text]);
+  return src;
+}
 
 export function Dialog({title,onClose,children,busy=false}:{title:string;onClose:()=>void;children:ReactNode;busy?:boolean}){
   const ref=useRef<HTMLDivElement>(null),latest=useRef({onClose,busy});

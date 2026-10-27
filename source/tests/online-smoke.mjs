@@ -1,4 +1,4 @@
-// 本物の Supabase プロジェクトに対する動作確認（発行・再送・1端末1枚・取消・定員・200件同時）。
+// 本物の Supabase プロジェクトに対する動作確認（発行・再送・1端末1枚・取消・定員・200件同時・入場受付）。
 // 使い方（source フォルダーで）:
 //   set SEIRIKEN_STAFF_EMAIL=staff@example.com
 //   set SEIRIKEN_STAFF_PASSWORD=パスワード
@@ -50,7 +50,7 @@ const {id}=await rpc('admin_operation',{p:{action:'create',label:'自動確認',
 step(`確認用の回を作成（id ${id}）`);
 
 try{
-  const issue=(party,device=randomUUID(),req=randomUUID())=>rpc('issue_ticket',{p_round_id:id,p_children:{high_school:party},p_guardians:0,p_name:'自動確認',p_device_id:device,p_request_id:req});
+  const issue=(party,device=randomUUID(),req=randomUUID())=>rpc('issue_ticket',{p_round_id:id,p_children:{high_school:party},p_guardians:0,p_device_id:device,p_request_id:req});
   const device=randomUUID(),req=randomUUID();
   const first=await issue(2,device,req);
   assert.equal(first.ticket.number,1);
@@ -83,6 +83,15 @@ try{
   assert.equal(list.tickets.filter(t=>t.status==='active').length,ok.length+1);
   await rpc('admin_cancel',{p_id:second.ticket.id},staff);
   step('スタッフの一覧・取消');
+
+  const entering=results.find(r=>r.status==='fulfilled').value.ticket;
+  const anonCheckin=await rpc('admin_checkin',{p_round_id:id,p_code:entering.checkin_code,p_number:null}).then(()=>'ok',e=>e.status);
+  assert.notEqual(anonCheckin,'ok','ログインしていない人が入場受付できてしまいます');
+  const done=await rpc('admin_checkin',{p_round_id:id,p_code:entering.checkin_code,p_number:null},staff);
+  assert.equal(done.replayed,false);assert.ok(done.ticket.checked_in_at);
+  assert.equal((await rpc('admin_checkin',{p_round_id:id,p_code:entering.checkin_code,p_number:null},staff)).replayed,true);
+  await fails(rpc('admin_cancel',{p_id:entering.id},staff),'checked_in');
+  step('入場受付（2回目は「受付済み」、受付済みは取り消せない）');
 }finally{
   await rpc('admin_operation',{p:{action:'pause',id}},staff).catch(()=>{});
   console.log(`確認用の回「自動確認」（id ${id}）は一時停止にしました。不要なら、本番前にプロジェクトを作り直すか、そのままにしておいてください。`);

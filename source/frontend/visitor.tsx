@@ -3,16 +3,15 @@ import {Ticket as TicketIcon,Clock3,Users,ChevronRight,RefreshCw,TriangleAlert,A
 import {ApiError,newId,scope,clockSeconds,dateLabel} from './lib/api';
 import {backend,MODE,type Saved} from './lib/backend';
 import type {Children,PublicRound,PublicState,Ticket} from './lib/types';
-import {STATUS_LABELS,CHILD_KINDS,MAX_GUARDIANS,MAX_NAME,emptyChildren,childTotal,needsGuardian,childSummary} from './lib/types';
+import {STATUS_LABELS,CHILD_KINDS,MAX_GUARDIANS,emptyChildren,childTotal,needsGuardian,childSummary,checkinPayload} from './lib/types';
 import {content} from './content';
-import {Dialog,Toast} from './ui';
+import {Dialog,Toast,useQr} from './ui';
 
-const DEVICE_KEY=`seiriken-${scope}-device-v1`,TICKETS_KEY=`seiriken-${scope}-tickets-v1`,PENDING_KEY=`seiriken-${scope}-pending-v1`,NAME_KEY=`seiriken-${scope}-name-v1`;
-type Pending={requestId:string;roundId:number;children:Children;guardians:number;name:string};
-type Form={round:PublicRound;children:Children;guardians:number;name:string};
+const DEVICE_KEY=`seiriken-${scope}-device-v1`,TICKETS_KEY=`seiriken-${scope}-tickets-v1`,PENDING_KEY=`seiriken-${scope}-pending-v1`,OLD_NAME_KEY=`seiriken-${scope}-name-v1`;
+type Pending={requestId:string;roundId:number;children:Children;guardians:number};
+type Form={round:PublicRound;children:Children;guardians:number};
 
 function load<T>(key:string,fallback:T):T{const raw=localStorage.getItem(key);if(!raw)return fallback;try{return JSON.parse(raw) as T;}catch{return fallback;}}
-function savedName(){try{return localStorage.getItem(NAME_KEY)??'';}catch{return '';}}
 function deviceId(){let id=localStorage.getItem(DEVICE_KEY);if(!id){id=newId();localStorage.setItem(DEVICE_KEY,id);}return id;}
 export const tone=(roundId:number)=>`tone-${roundId%6}`;
 const byStart=(a:Ticket,b:Ticket)=>a.starts_at.localeCompare(b.starts_at)||a.number-b.number;
@@ -31,7 +30,7 @@ function takeLink(list:Saved[]):{list:Saved[];id:string|null}{
   history.replaceState(null,'',location.pathname+location.search+'#/ticket');
   return {list:list.some(s=>s.id===id)?list:[...list,{id,token:m[2]}],id};
 }
-const sameParty=(p:Pending,f:Form)=>p.roundId===f.round.id&&p.guardians===f.guardians&&p.name===f.name&&CHILD_KINDS.every(k=>p.children[k.key]===f.children[k.key]);
+const sameParty=(p:Pending,f:Form)=>p.roundId===f.round.id&&p.guardians===f.guardians&&CHILD_KINDS.every(k=>p.children[k.key]===f.children[k.key]);
 export function partyText(t:Ticket){
   const kids=t.children&&childTotal(t.children)?`子ども ${t.party_size}名（${childSummary(t.children)}）`:`${t.party_size}名`;
   return t.guardians?`${kids}・保護者 ${t.guardians}名`:kids;
@@ -97,6 +96,7 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
     let list:Saved[]=[],p:Pending|null=null;
     try{
       deviceId();
+      localStorage.removeItem(OLD_NAME_KEY);
       const raw=load<Saved[]>(TICKETS_KEY,[]);
       list=(Array.isArray(raw)?raw:[]).map(validSaved).filter((s):s is Saved=>!!s);
       p=load<Pending|null>(PENDING_KEY,null);
@@ -105,7 +105,7 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
     list=linked.list;
     if(linked.id){setHighlight(linked.id);try{localStorage.setItem(TICKETS_KEY,JSON.stringify(list));}catch{setStorageError(true);}}
     savedRef.current=list;setSaved(list);setTickets(cachedTickets(list));
-    if(p?.requestId&&p.children&&typeof p.name==='string')setPending(p);else if(p){try{localStorage.removeItem(PENDING_KEY);}catch{}}
+    if(p?.requestId&&p.children)setPending({requestId:p.requestId,roundId:p.roundId,children:p.children,guardians:p.guardians});else if(p){try{localStorage.removeItem(PENDING_KEY);}catch{}}
     refreshRounds();refreshTickets(list);
     const poll=setInterval(()=>{if(document.visibilityState==='visible'&&!busyRef.current){refreshRounds();refreshTickets();}},10000);
     const tick=setInterval(()=>setNow(Date.now()),1000);
@@ -121,20 +121,27 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
     return()=>clearTimeout(timer);
   },[page,highlight,tickets.length]);
 
+  const waitingCheckin=page==='ticket'&&tickets.some(t=>t.status==='active'&&!t.round_finished&&t.checkin_code&&!t.checked_in_at);
+  useEffect(()=>{
+    if(!waitingCheckin)return;
+    const poll=setInterval(()=>{if(document.visibilityState==='visible'&&!busyRef.current)refreshTickets();},4000);
+    return()=>clearInterval(poll);
+  },[waitingCheckin,refreshTickets]);
+
   const serverNow=now+offset;
   const activeTickets=tickets.filter(t=>t.status==='active'&&!t.round_finished);
   const mine=(roundId:number)=>tickets.find(t=>t.round_id===roundId&&t.status==='active');
 
   async function issue(f:Form){
     if(busyRef.current)return;
-    const guardians=needsGuardian(f.children)?f.guardians:0,name=f.name.trim();
-    const op:Pending=pending&&sameParty(pending,{...f,guardians,name})?pending:{requestId:newId(),roundId:f.round.id,children:f.children,guardians,name};
+    const guardians=needsGuardian(f.children)?f.guardians:0;
+    const op:Pending=pending&&sameParty(pending,{...f,guardians})?pending:{requestId:newId(),roundId:f.round.id,children:f.children,guardians};
     let device:string;
-    try{device=deviceId();localStorage.setItem(PENDING_KEY,JSON.stringify(op));localStorage.setItem(NAME_KEY,name);setPending(op);}
+    try{device=deviceId();localStorage.setItem(PENDING_KEY,JSON.stringify(op));setPending(op);}
     catch{setStorageError(true);notify('このブラウザーでは整理券を保存できないため、申し込みを止めました。',true);return;}
     busyRef.current=true;setBusy(true);setIssuing(true);
     try{
-      const r=await (await backend()).issue({roundId:op.roundId,children:op.children,guardians:op.guardians,name:op.name,deviceId:device,requestId:op.requestId});
+      const r=await (await backend()).issue({roundId:op.roundId,children:op.children,guardians:op.guardians,deviceId:device,requestId:op.requestId});
       addTicket(r.ticket);savePending(null);setForm(null);setHighlight(r.ticket.id);
       notify(`${r.ticket.round_label}の整理券（No.${r.ticket.number}）を取りました。`);
       location.hash='#/ticket';
@@ -193,7 +200,8 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
       {!tickets.length&&saved.length>0&&checked==='failed'&&<div className="v-empty"><TriangleAlert size={36} strokeWidth={1.4}/><strong>整理券を表示できませんでした</strong><p>通信がつながると表示されます。電波の良い場所で「再読み込み」を押してください。</p></div>}
       {!tickets.length&&(!saved.length||checked==='ok')&&<div className="v-empty"><TicketIcon size={36} strokeWidth={1.4}/><strong>整理券はまだありません</strong><p>回の一覧から、整理券を取ってください。別のブラウザーで取った場合は、そのとき保存した「整理券のリンク」を開いてください。</p><a className="button primary" href="#/">回の一覧へ<ChevronRight size={16}/></a></div>}
       <div className="ticket-list">{tickets.map(t=><TicketCard key={t.id} t={t} now={serverNow} highlight={t.id===highlight} onCancel={()=>setCancelTarget(t)} onLink={()=>setLinkTarget(t)}/>)}</div>
-      {tickets.length>0&&<p className="v-hint"><Info size={14}/>入場時にこの画面をスタッフに見せてください。時刻が動いていることを確認します。</p>}
+      {tickets.some(t=>t.status==='active'&&!t.round_finished&&t.checkin_code&&!t.checked_in_at)&&<p className="v-hint"><Info size={14}/>入場口で、整理券のQRコードをスタッフに読み取ってもらってください。画面を明るくすると読み取りやすくなります。</p>}
+      {tickets.length>0&&!tickets.some(t=>t.checkin_code)&&<p className="v-hint"><Info size={14}/>入場時にこの画面をスタッフに見せてください。時刻が動いていることを確認します。</p>}
       {tickets.some(t=>t.status==='active'&&!t.round_finished)&&<p className="v-hint"><Info size={14}/>整理券は、いま開いているブラウザーに保存されています。QRコードを別のアプリで読むと表示されないことがあるので、「整理券のリンクを保存」からリンクを残しておくと安心です。</p>}
     </main>
     <footer className="v-footer">{content.footer}</footer>
@@ -223,7 +231,7 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
           <div className="round-head"><span className={`round-tone ${tone(r.id)}`}/><div><h3>{r.label}</h3><p>開演 <strong>{r.starts_time}</strong></p></div><span className={`status-chip status-${r.status}`}><span/>{STATUS_LABELS[r.status]}</span></div>
           <dl className="round-meta"><div><dt>受付時間</dt><dd>{r.opens_time}〜{r.closes_time}</dd></div><div><dt>残り</dt><dd className={r.remaining>0&&r.remaining<=Math.max(5,r.capacity_people*0.1)?'low':''}>{r.status==='finished'?'—':`${r.remaining} 名`}<small> / {r.capacity_people} 名</small></dd></div></dl>
           {owned?<a className="button full" href="#/ticket" onClick={()=>setHighlight(owned.id)}><TicketIcon size={17}/>整理券を見る（No.{owned.number}）</a>
-          :r.status==='open'?<button className="button primary full" disabled={busy||storageError||!!pending} onClick={()=>setForm({round:r,children:emptyChildren(),guardians:1,name:savedName()})}><TicketIcon size={17}/>整理券を取る</button>
+          :r.status==='open'?<button className="button primary full" disabled={busy||storageError||!!pending} onClick={()=>setForm({round:r,children:emptyChildren(),guardians:1})}><TicketIcon size={17}/>整理券を取る</button>
           :<p className="round-note">{roundNote(r,serverNow)}</p>}
           {r.status==='open'&&!owned&&<p className="round-sub">1枚で子ども最大 {r.max_party} 名まで申し込めます。未就学児・小学生は、保護者の方も一緒に入場できます（定員には数えません）。</p>}
         </article>;
@@ -233,12 +241,10 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
     {form&&(()=>{
       const round=state?.rounds.find(x=>x.id===form.round.id)??form.round;
       const total=childTotal(form.children),max=Math.max(0,Math.min(round.max_party,round.remaining)),guardian=needsGuardian(form.children);
-      const nameOk=form.name.trim().length>0&&[...form.name.trim()].length<=MAX_NAME;
       const setKind=(key:keyof Children,value:number)=>setForm({...form,children:{...form.children,[key]:value}});
       return <Dialog title="整理券を取る" busy={busy} onClose={()=>setForm(null)}>
         <span className="dialog-symbol"><TicketIcon size={24}/></span>
         <h2>{round.label}（開演 {round.starts_time}）</h2>
-        <label className="name-field"><span>お名前<small>代表者の方のお名前</small></span><input type="text" autoComplete="name" maxLength={MAX_NAME} placeholder="例: 紅華 花子" value={form.name} disabled={busy} onChange={e=>setForm({...form,name:e.target.value})}/></label>
         <p className="dialog-description">入場するお子さまの人数を、区分ごとに選んでください。1枚で子ども {round.max_party} 名まで、残りは {round.remaining} 名分です。</p>
         <div className="party-form">
           {CHILD_KINDS.map(k=><Stepper key={k.key} label={k.label} value={form.children[k.key]} min={0} canAdd={total<max} disabled={busy} onChange={v=>setKind(k.key,v)}/>)}
@@ -247,10 +253,9 @@ export default function Visitor({page}:{page:'home'|'ticket'}){
             <p>未就学児・小学生と一緒に入場する保護者の人数です。</p>
           </div>}
         </div>
-        {!form.name.trim()&&<p className="name-hint">お名前を入力すると、整理券を取れます。</p>}
         <div className="confirm-values"><div className="emphasis"><span>子ども</span><strong>{total} 名</strong></div>{guardian&&<div><span>保護者</span><strong>{form.guardians} 名</strong></div>}</div>
         <p className="dialog-description">整理券はこのスマホに保存されます。1つの回につき1枚までです。</p>
-        <div className="dialog-buttons"><button className="button" disabled={busy} onClick={()=>setForm(null)}>戻る</button><button className="button primary" disabled={busy||total<1||total>max||!nameOk} onClick={()=>issue({...form,round})}>{busy?<RefreshCw size={16} className="spin"/>:<Users size={16}/>}整理券を取る</button></div>
+        <div className="dialog-buttons"><button className="button" disabled={busy} onClick={()=>setForm(null)}>戻る</button><button className="button primary" disabled={busy||total<1||total>max} onClick={()=>issue({...form,round})}>{busy?<RefreshCw size={16} className="spin"/>:<Users size={16}/>}整理券を取る</button></div>
       </Dialog>;
     })()}
     <Toast toast={toast} onClose={()=>setToast(null)}/>
@@ -287,22 +292,27 @@ function LinkDialog({t,notify,onClose}:{t:Ticket;notify:(text:string,error?:bool
   </Dialog>;
 }
 
+const checkedTime=(iso:string)=>new Date(iso).toLocaleTimeString('ja-JP',{timeZone:'Asia/Tokyo',hour:'2-digit',minute:'2-digit',hour12:false});
+
 function TicketCard({t,now,highlight,onCancel,onLink}:{t:Ticket;now:number;highlight:boolean;onCancel:()=>void;onLink:()=>void}){
   const live=t.status==='active'&&!t.round_finished;
+  const checked=t.status==='active'&&!!t.checked_in_at;
+  const qr=useQr(live&&!checked&&t.checkin_code?checkinPayload(t.checkin_code):'');
   return <article id={`ticket-${t.id}`} className={`ticket-card ${tone(t.round_id)} ${t.status==='cancelled'?'cancelled':''} ${t.round_finished?'finished':''} ${highlight?'highlight':''}`}>
     <div className="ticket-band"><span>{content.eventName} {content.performanceName}</span><span>整理券</span></div>
     <div className="ticket-body">
       <div className="ticket-round"><strong>{t.round_label}</strong><span>開演 {t.starts_time}</span></div>
       <div className="ticket-number"><span>No.</span>{t.number}</div>
-      {t.name&&<div className="ticket-name">{t.name} 様</div>}
       <div className="ticket-party"><Users size={20}/>{t.children&&childTotal(t.children)?<>子ども {t.party_size} 名{t.guardians?<span className="ticket-guardians">＋保護者 {t.guardians} 名</span>:null}</>:<>{t.party_size} 名</>}</div>
       {t.children&&childTotal(t.children)>0&&<div className="ticket-kinds">{childSummary(t.children).replace(/(\d+)/g,' $1名')}</div>}
+      {checked&&<div className="ticket-checked" role="status"><CheckCircle2 size={30}/><span><strong>受付済み</strong><small>{checkedTime(t.checked_in_at!)} に入場受付をしました</small></span></div>}
+      {qr&&<div className="ticket-qr"><img src={qr} alt="入場受付用のQRコード"/><small>入場口でこのQRコードを読み取ってもらってください</small></div>}
       {live&&<div className="ticket-live" aria-label="現在時刻"><span className="live-dot"/>{dateLabel(now)}<strong>{clockSeconds(now)}</strong></div>}
       {t.status==='cancelled'&&<div className="ticket-state">{t.cancelled_by==='staff'?'スタッフにより取り消された整理券です':'取り消した整理券です'}</div>}
       {t.status==='active'&&t.round_finished&&<div className="ticket-state">この回は終了しました</div>}
     </div>
-    {t.status==='active'&&!t.round_finished&&t.token&&<div className="ticket-foot ticket-link"><button className="text-link" onClick={onLink}><Link2 size={14}/>整理券のリンクを保存（別のブラウザー用）</button></div>}
-    {t.status==='active'&&!t.round_finished&&<div className="ticket-foot">{t.cancellable?<button className="text-link danger-link" onClick={onCancel}>この整理券を取り消す</button>:<span>開演時刻を過ぎたため、取り消しはできません</span>}</div>}
+    {live&&!checked&&t.token&&<div className="ticket-foot ticket-link"><button className="text-link" onClick={onLink}><Link2 size={14}/>整理券のリンクを保存（別のブラウザー用）</button></div>}
+    {live&&<div className="ticket-foot">{t.cancellable?<button className="text-link danger-link" onClick={onCancel}>この整理券を取り消す</button>:<span>{checked?'受付が済んでいるため、取り消しはできません':'開演時刻を過ぎたため、取り消しはできません'}</span>}</div>}
     <div className="ticket-shine" aria-hidden="true"/>
   </article>;
 }
