@@ -13,7 +13,7 @@ export function useQr(text:string){
   return src;
 }
 
-export function Dialog({title,onClose,children,busy=false}:{title:string;onClose:()=>void;children:ReactNode;busy?:boolean}){
+export function Dialog({title,onClose,children,busy=false,wide=false}:{title:string;onClose:()=>void;children:ReactNode;busy?:boolean;wide?:boolean}){
   const ref=useRef<HTMLDivElement>(null),latest=useRef({onClose,busy});
   latest.current={onClose,busy};
   useEffect(()=>{
@@ -28,7 +28,7 @@ export function Dialog({title,onClose,children,busy=false}:{title:string;onClose
     return()=>{clearTimeout(timer);document.body.style.overflow=prior;document.removeEventListener('keydown',key);previous?.focus();};
   },[]);
   return <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget&&!busy)onClose();}}>
-    <div className="dialog" role="dialog" aria-modal="true" aria-label={title} ref={ref}>
+    <div className={wide?'dialog wide':'dialog'} role="dialog" aria-modal="true" aria-label={title} ref={ref}>
       <button className="icon-button dialog-close" onClick={onClose} disabled={busy} aria-label="閉じる"><X size={20}/></button>
       {children}
     </div>

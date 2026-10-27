@@ -1,5 +1,5 @@
 import {useCallback,useEffect,useRef,useState,type CSSProperties,type FormEvent,type ReactNode} from 'react';
-import {Ticket as TicketIcon,CalendarClock,ListOrdered,ChartNoAxesCombined,ChartColumn,QrCode,ScanQrCode,Plus,Pencil,Trash2,Pause,Play,RefreshCw,Search,TriangleAlert,ChevronRight,Download,Printer,KeyRound,PanelLeftClose,PanelLeftOpen,ShieldCheck,Wifi,DatabaseBackup,LockKeyhole,Users,XCircle,ExternalLink,LogOut,Cloud,CircleCheck,MapPin,Hourglass,Layers} from 'lucide-react';
+import {Ticket as TicketIcon,CalendarClock,ListOrdered,ChartNoAxesCombined,ChartColumn,QrCode,ScanQrCode,Plus,Pencil,Trash2,Pause,Play,RefreshCw,Search,TriangleAlert,ChevronRight,Download,Printer,KeyRound,PanelLeftClose,PanelLeftOpen,ShieldCheck,Wifi,DatabaseBackup,LockKeyhole,Users,XCircle,ExternalLink,LogOut,Cloud,CircleCheck,MapPin,Hourglass,Layers,CopyPlus} from 'lucide-react';
 import {ApiError,fmt} from './lib/api';
 import {backend,MODE} from './lib/backend';
 import type {AdminRound,AdminState,AdminTicket,AdminWaitEntry,EventInfo} from './lib/types';
@@ -33,6 +33,50 @@ function emptyForm(eventId:number|undefined,last?:AdminRound):RoundForm{
 }
 const roundForm=(r:AdminRound):RoundForm=>({id:r.id,eventId:String(r.event_id??''),label:r.label,startsTime:r.starts_time,opensTime:r.opens_time,closesTime:r.closes_time,capacity:String(r.capacity_people),maxParty:String(r.max_party),finishAfterMinutes:String(r.finish_after_minutes),durationMinutes:String(r.duration_minutes)});
 const eventName=(events:EventInfo[],id:number)=>events.find(e=>e.id===id)?.label??'';
+
+type BulkForm={eventId:string;firstStart:string;lastStart:string;interval:string;opensBefore:string;closesBefore:string;capacity:string;maxParty:string;durationMinutes:string;finishAfterMinutes:string};
+type BulkRow={label:string;starts:string;ends:string;opens:string;closes:string;skip:boolean;overlap:boolean};
+const BULK_MAX=50;
+const toMin=(t:string)=>Number(t.slice(0,2))*60+Number(t.slice(3,5));
+const fromMin=(m:number)=>`${String(Math.floor(m/60)%24).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
+function bulkForm(eventId:number|undefined,last?:AdminRound):BulkForm{
+  const base={eventId:eventId?String(eventId):'',firstStart:'10:00',lastStart:'15:00',interval:'60',opensBefore:'60',closesBefore:'0',capacity:'100',maxParty:'4',durationMinutes:'30',finishAfterMinutes:'30'};
+  if(!last)return base;
+  const s=toMin(last.starts_time);
+  return {...base,opensBefore:String(Math.max(0,s-toMin(last.opens_time))),closesBefore:String(Math.max(0,s-toMin(last.closes_time))),capacity:String(last.capacity_people),maxParty:String(last.max_party),durationMinutes:String(last.duration_minutes),finishAfterMinutes:String(last.finish_after_minutes)};
+}
+// 同じイベントにすでにある開演時刻はとばすので、途中で止まっても押し直せば残りだけが追加される
+function bulkPlan(f:BulkForm,rounds:AdminRound[]):{rows:BulkRow[];error:string;outOfOrder?:boolean}{
+  const fail=(error:string)=>({rows:[],error});
+  if(!f.eventId)return fail('イベントを選んでください。');
+  if(!isTime(f.firstStart)||!isTime(f.lastStart))return fail('開演の時刻は「10:00」の形式で入力してください。');
+  if(!isCount(f.interval,5,600))return fail('間隔は5〜600分で入力してください。');
+  if(!isCount(f.opensBefore,0,1440)||!isCount(f.closesBefore,0,1440))return fail('受付の時間は、開演の0〜1440分前で入力してください。');
+  if(!isCount(f.capacity,1,10000)||!isCount(f.maxParty,1,20)||!isCount(f.finishAfterMinutes,0,600)||!isCount(f.durationMinutes,1,600))return fail('定員は1〜10000、1枚あたりの人数は1〜20、上演時間は1〜600分、終了扱いまでの時間は0〜600分で入力してください。');
+  const first=toMin(f.firstStart),last=toMin(f.lastStart),step=Number(f.interval),before=Number(f.opensBefore),until=Number(f.closesBefore),duration=Number(f.durationMinutes);
+  if(last<first)return fail('最後の開演は、最初の開演と同じか、それより後の時刻にしてください。');
+  if(before<=until)return fail('受付開始は受付終了より前にしてください（「何分前から」を「何分前まで」より大きくします）。');
+  const count=Math.floor((last-first)/step)+1;
+  if(count>BULK_MAX)return fail(`一度に追加できるのは${BULK_MAX}回までです（いまの設定では${count}回）。間隔か時刻を見直してください。`);
+  if(first-before<0)return fail(`最初の回（${f.firstStart}）の受付開始が0:00より前になります。「何分前から」を短くしてください。`);
+  const mine=rounds.filter(r=>r.event_id===Number(f.eventId));
+  const taken=new Set(mine.map(r=>r.starts_time));
+  const numbers=mine.map(r=>/^第(\d+)回$/.exec(r.label)?.[1]).filter((n):n is string=>!!n).map(Number);
+  let next=(numbers.length?Math.max(...numbers):mine.length)+1;
+  const rows:BulkRow[]=[];
+  for(let i=0;i<count;i++){
+    const s=first+i*step,starts=fromMin(s),skip=taken.has(starts);
+    rows.push({label:skip?'':`第${next++}回`,starts,ends:fromMin(s+duration),opens:fromMin(s-before),closes:fromMin(s-until),skip,overlap:false});
+  }
+  const spans=[...mine.map(r=>[toMin(r.starts_time),toMin(r.starts_time)+r.duration_minutes]),...rows.filter(r=>!r.skip).map(r=>[toMin(r.starts),toMin(r.starts)+duration])];
+  for(const r of rows){
+    if(r.skip)continue;
+    const a=toMin(r.starts),b=a+duration;
+    r.overlap=spans.filter(([x,y])=>x<b&&a<y).length>1;
+  }
+  const latest=mine.reduce((m,r)=>Math.max(m,toMin(r.starts_time)),-1);
+  return {rows,error:'',outOfOrder:rows.some(r=>!r.skip&&toMin(r.starts)<latest)};
+}
 function wifiEscape(s:string){return s.replace(/([\\;,:"])/g,'\\$1');}
 
 export default function Admin(){
@@ -43,6 +87,7 @@ export default function Admin(){
   const [busy,setBusy]=useState(false),[toast,setToast]=useState<{text:string;error?:boolean}|null>(null);
   const [code,setCode]=useState(''),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[loginError,setLoginError]=useState('');
   const [form,setForm]=useState<RoundForm|null>(null),[formError,setFormError]=useState('');
+  const [bulk,setBulk]=useState<BulkForm|null>(null);
   const [deleteTarget,setDeleteTarget]=useState<AdminRound|null>(null);
   const [eventForm,setEventForm]=useState<EventForm|null>(null),[eventDelete,setEventDelete]=useState<EventInfo|null>(null);
   const [eventFilter,setEventFilter]=useState<number|null>(null);
@@ -111,6 +156,27 @@ export default function Admin(){
     setFormError('');
     const ok=await operate({action:form.id?'update':'create',id:form.id,eventId:Number(form.eventId),label,startsTime:form.startsTime,opensTime:form.opensTime,closesTime:form.closesTime,capacity:Number(form.capacity),maxParty:Number(form.maxParty),finishAfterMinutes:Number(form.finishAfterMinutes),durationMinutes:Number(form.durationMinutes)},form.id?'回を更新しました。':'回を追加しました。');
     if(ok)setForm(null);
+  }
+  async function saveBulk(){
+    if(!bulk)return;
+    const plan=bulkPlan(bulk,state?.rounds??[]);
+    if(plan.error){setFormError(plan.error);return;}
+    const todo=plan.rows.filter(r=>!r.skip);
+    if(!todo.length)return;
+    setFormError('');setBusy(true);
+    let added=0;
+    try{
+      const b=await backend();
+      for(const r of todo){
+        await b.adminOperation({action:'create',eventId:Number(bulk.eventId),label:r.label,startsTime:r.starts,opensTime:r.opens,closesTime:r.closes,capacity:Number(bulk.capacity),maxParty:Number(bulk.maxParty),finishAfterMinutes:Number(bulk.finishAfterMinutes),durationMinutes:Number(bulk.durationMinutes)});
+        added++;
+      }
+      notify(`${added}回を追加しました。`);setBulk(null);
+    }catch(e){
+      if(e instanceof ApiError&&e.status===401)setAuth('login');
+      const message=e instanceof Error?e.message:'保存できませんでした。';
+      setFormError(added?`${added}回を追加したところで止まりました（${message}）。もう一度追加のボタンを押すと、残りの回だけを追加します。`:message);
+    }finally{setBusy(false);await refresh();}
   }
   async function saveEvent(){
     if(!eventForm)return;
@@ -222,7 +288,7 @@ export default function Admin(){
               </div></td>
             </tr>;})}</tbody></table></div>:<div className="empty"><div className="empty-icon"><Layers size={26}/></div><strong>まずイベントを登録してください</strong><p>「イベントを追加」から、イベントの名前と会場を登録します。回はイベントごとに登録します。</p></div>}
           </section>
-          <section className="panel"><div className="panel-heading"><h2><CalendarClock size={18}/>回の一覧</h2><div className="row-actions">{events.length>1&&eventSelect(eventFilter,setEventFilter)}<button className="button primary small" disabled={busy||connection!=='ok'||!events.length} onClick={()=>{const ev=eventFilter??events[0]?.id;setFormError('');setForm(emptyForm(ev,rounds.filter(r=>r.event_id===ev).at(-1)));}}><Plus size={16}/>回を追加</button></div></div>
+          <section className="panel"><div className="panel-heading"><h2><CalendarClock size={18}/>回の一覧</h2><div className="row-actions">{events.length>1&&eventSelect(eventFilter,setEventFilter)}<button className="button primary small" disabled={busy||connection!=='ok'||!events.length} onClick={()=>{const ev=eventFilter??events[0]?.id;setFormError('');setForm(emptyForm(ev,rounds.filter(r=>r.event_id===ev).at(-1)));}}><Plus size={16}/>回を追加</button><button className="button small" disabled={busy||connection!=='ok'||!events.length} onClick={()=>{const ev=eventFilter??events[0]?.id;setFormError('');setBulk(bulkForm(ev,rounds.filter(r=>r.event_id===ev).at(-1)));}}><CopyPlus size={16}/>まとめて追加</button></div></div>
             {shown.length?<div className="table-scroll"><table><thead><tr><th>回</th><th>開演〜終演</th><th>受付時間</th><th>状態</th><th className="right">発行</th><th className="right">残り / 定員</th>{WAITLIST&&<th className="right">キャンセル待ち</th>}<th className="right">操作</th></tr></thead><tbody>{shown.map(r=><tr key={r.id} className={r.status==='finished'?'voided':''}>
               <td><span className={`round-dot ${tone(r.id)}`}/>{r.label}<span className="table-note">{eventName(events,r.event_id)}・1枚 最大{r.max_party}名・開演{r.finish_after_minutes}分後に終了扱い</span></td>
               <td className="mono">{r.starts_time}〜{r.ends_time}<span className="table-note">上演 {r.duration_minutes} 分</span></td>
@@ -324,6 +390,50 @@ export default function Admin(){
       {formError&&<p className="field-hint negative" role="alert">{formError}</p>}
       <div className="dialog-buttons spaced"><button className="button" disabled={busy} onClick={()=>setForm(null)}>やめる</button><button className="button primary" disabled={busy} onClick={saveForm}>{busy&&<RefreshCw size={16} className="spin"/>}{form.id?'更新する':'追加する'}</button></div>
     </Dialog>}
+
+    {bulk&&(()=>{
+      const plan=bulkPlan(bulk,rounds),todo=plan.rows.filter(r=>!r.skip).length,skipped=plan.rows.length-todo;
+      const set=(patch:Partial<BulkForm>)=>{setBulk(b=>b&&{...b,...patch});setFormError('');};
+      const num=(key:keyof BulkForm,digits:number)=>(e:{target:{value:string}})=>{if(new RegExp(`^\\d{0,${digits}}$`).test(e.target.value))set({[key]:e.target.value});};
+      return <Dialog title="回をまとめて追加" busy={busy} wide onClose={()=>setBulk(null)}>
+        <span className="dialog-eyebrow">NEW ROUNDS</span>
+        <h2>回をまとめて追加</h2>
+        <p className="dialog-description">同じ間隔で開演する回を、一度に登録します。時刻は開催日（{state?.eventDate}）の時刻として扱います。</p>
+        <label className="form-label" htmlFor="b-event">イベント</label>
+        <select id="b-event" className="filter-select full" value={bulk.eventId} onChange={e=>set({eventId:e.target.value})}>{!bulk.eventId&&<option value="">選んでください</option>}{events.map(ev=><option key={ev.id} value={ev.id}>{ev.label}{ev.venue?`（${ev.venue}）`:''}</option>)}</select>
+        <div className="form-three">
+          <div><label className="form-label" htmlFor="b-first">最初の開演</label><input id="b-first" type="time" className="text-input" value={bulk.firstStart} onChange={e=>set({firstStart:e.target.value})}/></div>
+          <div><label className="form-label" htmlFor="b-last">最後の開演</label><input id="b-last" type="time" className="text-input" value={bulk.lastStart} onChange={e=>set({lastStart:e.target.value})}/></div>
+          <div><label className="form-label" htmlFor="b-step">間隔（分）</label><input id="b-step" inputMode="numeric" className="text-input" value={bulk.interval} onChange={num('interval',3)}/></div>
+        </div>
+        <div className="bulk-presets" role="group" aria-label="よく使う間隔">{[30,45,60,90].map(m=><button key={m} type="button" className={`button small ${bulk.interval===String(m)?'on':''}`} onClick={()=>set({interval:String(m)})}>{m%60?`${m}分`:`${m/60}時間`}ごと</button>)}</div>
+        <div className="form-three">
+          <div><label className="form-label" htmlFor="b-before">受付開始（開演の何分前から）</label><input id="b-before" inputMode="numeric" className="text-input" value={bulk.opensBefore} onChange={num('opensBefore',4)}/></div>
+          <div><label className="form-label" htmlFor="b-until">受付終了（開演の何分前まで）</label><input id="b-until" inputMode="numeric" className="text-input" value={bulk.closesBefore} onChange={num('closesBefore',4)}/></div>
+        </div>
+        <p className="field-hint">例：「60分前から」「0分前まで」なら、10:00開演の回は 9:00〜10:00 に整理券を配ります。</p>
+        <div className="form-three">
+          <div><label className="form-label" htmlFor="b-cap">定員（子ども）</label><input id="b-cap" inputMode="numeric" className="text-input" value={bulk.capacity} onChange={num('capacity',5)}/></div>
+          <div><label className="form-label" htmlFor="b-max">1枚の子ども上限</label><input id="b-max" inputMode="numeric" className="text-input" value={bulk.maxParty} onChange={num('maxParty',2)}/></div>
+        </div>
+        <div className="form-three">
+          <div><label className="form-label" htmlFor="b-dur">上演時間（分）</label><input id="b-dur" inputMode="numeric" className="text-input" value={bulk.durationMinutes} onChange={num('durationMinutes',3)}/></div>
+          <div><label className="form-label" htmlFor="b-fin">終了扱い（開演後 分）</label><input id="b-fin" inputMode="numeric" className="text-input" value={bulk.finishAfterMinutes} onChange={num('finishAfterMinutes',3)}/></div>
+        </div>
+        <h3 className="bulk-heading">追加される回{plan.rows.length>0&&<span className="muted tiny">{todo} 回{skipped?`（すでにある ${skipped} 回はとばします）`:''}</span>}</h3>
+        {plan.error?<p className="field-hint negative" role="alert">{plan.error}</p>
+        :<div className="table-scroll bulk-preview"><table><thead><tr><th>回</th><th>開演〜終演</th><th>受付時間</th><th></th></tr></thead><tbody>{plan.rows.map(r=><tr key={r.starts} className={r.skip?'voided':''}>
+          <td>{r.skip?<span className="muted">—</span>:r.label}</td>
+          <td className="mono">{r.starts}〜{r.ends}</td>
+          <td className="mono">{r.skip?'—':`${r.opens}〜${r.closes}`}</td>
+          <td>{r.skip?<span className="kind-pill void">すでにあります</span>:r.overlap?<span className="kind-pill wait">時間が重なります</span>:null}</td>
+        </tr>)}</tbody></table></div>}
+        {!plan.error&&plan.rows.some(r=>r.overlap)&&<p className="field-hint">同じイベントの回どうしで、開演〜終演の時間が重なっています（上演時間が間隔より長いときなど）。来場者は、重なる回の整理券を同時には持てません。このままでも追加できます。</p>}
+        {!plan.error&&plan.outOfOrder&&<p className="field-hint">すでにある回の続きの番号を付けるため、すでにある回より前に開演する回は、番号が開演の順になりません。気になるときは、追加したあとで回の名前を直してください。</p>}
+        {formError&&formError!==plan.error&&<p className="field-hint negative" role="alert">{formError}</p>}
+        <div className="dialog-buttons spaced"><button className="button" disabled={busy} onClick={()=>setBulk(null)}>やめる</button><button className="button primary" disabled={busy||!!plan.error||!todo} onClick={saveBulk}>{busy&&<RefreshCw size={16} className="spin"/>}{todo?`${todo}回を追加する`:'追加する回がありません'}</button></div>
+      </Dialog>;
+    })()}
 
     {eventForm&&<Dialog title={eventForm.id?'イベントを編集':'イベントを追加'} busy={busy} onClose={()=>setEventForm(null)}>
       <span className="dialog-eyebrow">{eventForm.id?'EDIT EVENT':'NEW EVENT'}</span>
