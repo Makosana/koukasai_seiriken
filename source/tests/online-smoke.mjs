@@ -1,9 +1,9 @@
-// 本物の Supabase プロジェクトに対する動作確認（発行・再送・1端末1枚・取消・定員・200件同時・入場受付）。
+// 本物の Supabase プロジェクトに対する動作確認（発行・再送・1端末1枚・取消・定員・200件同時・キャンセル待ち・入場受付）。
 // 使い方（source フォルダーで）:
 //   set SEIRIKEN_STAFF_EMAIL=staff@example.com
 //   set SEIRIKEN_STAFF_PASSWORD=パスワード
 //   ..\runtime\node.exe tests\online-smoke.mjs
-// 「自動確認」という名前の回を1つ作り、最後に一時停止します（整理券を発行した回は削除できないため残ります）。
+// 「自動確認」という名前のイベントと回を1つずつ作り、最後に回を一時停止します（整理券を発行した回は削除できないため残ります）。
 // 本番のデータを登録する前、または確認用に別のプロジェクトを作って実行してください。
 import {readFileSync,existsSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
@@ -46,8 +46,9 @@ step('新規登録（Sign up）が無効になっている');
 const state=await rpc('admin_state',{},staff);
 if(state.eventDate!==state.today){console.error(`開催日（${state.eventDate}）が今日（${state.today}）ではないため、受付中の回を作れません。運営画面で開催日を今日にしてから実行してください。`);process.exit(1);}
 const capacity=60;
-const {id}=await rpc('admin_operation',{p:{action:'create',label:'自動確認',startsTime:'23:59',opensTime:'00:00',closesTime:'23:59',capacity,maxParty:4,finishAfterMinutes:0}},staff);
-step(`確認用の回を作成（id ${id}）`);
+const event=await rpc('admin_operation',{p:{action:'event_create',label:'自動確認',venue:'',notice:''}},staff);
+const {id}=await rpc('admin_operation',{p:{action:'create',eventId:event.id,label:'自動確認',startsTime:'23:59',opensTime:'00:00',closesTime:'23:59',capacity,maxParty:4,finishAfterMinutes:0,durationMinutes:1}},staff);
+step(`確認用のイベントと回を作成（id ${id}）`);
 
 try{
   const issue=(party,device=randomUUID(),req=randomUUID())=>rpc('issue_ticket',{p_round_id:id,p_children:{high_school:party},p_guardians:0,p_device_id:device,p_request_id:req});
@@ -81,8 +82,14 @@ try{
 
   const list=await rpc('admin_list_tickets',{p_round_id:id,p_number:null},staff);
   assert.equal(list.tickets.filter(t=>t.status==='active').length,ok.length+1);
+  const waiting=await rpc('join_waitlist',{p_round_id:id,p_children:{high_school:1},p_guardians:0,p_device_id:randomUUID(),p_request_id:randomUUID()});
+  assert.equal(waiting.entry.status,'waiting');assert.equal(waiting.entry.position,1);
+  step('満員の回でキャンセル待ちに登録（1番目）');
   await rpc('admin_cancel',{p_id:second.ticket.id},staff);
   step('スタッフの一覧・取消');
+  const promoted=(await rpc('lookup_waitlist',{p_items:[{id:waiting.entry.id,token:waiting.entry.token}]})).entries[0];
+  assert.equal(promoted.status,'promoted');assert.ok(promoted.ticket?.token);
+  step(`取消で空いた席が、キャンセル待ちの人に自動で発行された（No.${promoted.ticket.number}）`);
 
   const entering=results.find(r=>r.status==='fulfilled').value.ticket;
   const anonCheckin=await rpc('admin_checkin',{p_round_id:id,p_code:entering.checkin_code,p_number:null}).then(()=>'ok',e=>e.status);

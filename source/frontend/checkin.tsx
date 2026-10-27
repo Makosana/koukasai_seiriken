@@ -3,7 +3,7 @@ import {Camera,CameraOff,CircleCheck,TriangleAlert,XCircle,RefreshCw,SwitchCamer
 import type jsQRType from 'jsqr';
 import {ApiError,fmt} from './lib/api';
 import {backend} from './lib/backend';
-import type {AdminRound,AdminTicket} from './lib/types';
+import type {AdminRound,AdminTicket,EventInfo} from './lib/types';
 import {STATUS_LABELS,checkinCode} from './lib/types';
 import {partyText} from './visitor';
 
@@ -22,12 +22,20 @@ function cameraMessage(e:unknown){
   if(name==='NotReadableError')return 'カメラをほかのアプリが使っています。カメラを使っているアプリを閉じてから、もう一度押してください。';
   return 'カメラを起動できませんでした。ページを再読み込みしてから、もう一度押してください。';
 }
+// いま受付できる回（受付開始〜終了扱いまで）のうち、開演がいちばん早い回
 function pickRound(rounds:AdminRound[]){
   return (rounds.find(r=>r.status==='open'||r.status==='full'||r.status==='paused'||r.status==='closed')??rounds.find(r=>r.status!=='finished')??rounds[0])?.id??null;
 }
+const EVENT_KEY='seiriken-checkin-event-v1';
 
-export default function CheckinTab({rounds,onChecked,onLogin}:{rounds:AdminRound[];onChecked:()=>void;onLogin:()=>void}){
+export default function CheckinTab({events,rounds:all,onChecked,onLogin}:{events:EventInfo[];rounds:AdminRound[];onChecked:()=>void;onLogin:()=>void}){
+  const [eventId,setEventId]=useState<number|null>(()=>{const v=Number(localStorage.getItem(EVENT_KEY));return Number.isSafeInteger(v)&&v>0?v:null;});
   const [roundId,setRoundId]=useState<number|null>(null);
+  const [autoRound,setAutoRound]=useState(true);
+  const usable=events.filter(ev=>all.some(r=>r.event_id===ev.id));
+  const event=usable.find(ev=>ev.id===eventId)??usable[0];
+  const rounds=event?all.filter(r=>r.event_id===event.id):all;
+  const best=pickRound(rounds);
   const [camera,setCamera]=useState<'off'|'starting'|'on'>('off'),[facing,setFacing]=useState<Facing>('environment');
   const [cameraError,setCameraError]=useState('');
   const [result,setResult]=useState<Result|null>(null),[history,setHistory]=useState<Result[]>([]);
@@ -38,7 +46,9 @@ export default function CheckinTab({rounds,onChecked,onLogin}:{rounds:AdminRound
   const roundRef=useRef<number|null>(null),workingRef=useRef(false),pauseUntil=useRef(0),lastRef=useRef({text:'',at:0}),serial=useRef(0);
   const latest=useRef({onChecked,onLogin});latest.current={onChecked,onLogin};
 
-  useEffect(()=>{if(roundId===null||!rounds.some(r=>r.id===roundId))setRoundId(pickRound(rounds));},[rounds,roundId]);
+  // 「自動」のときは、回が終了扱いになると次の回へ切り替える
+  useEffect(()=>{if(roundId===null||!rounds.some(r=>r.id===roundId)||(autoRound&&best!==roundId))setRoundId(best);},[rounds,roundId,autoRound,best]);
+  function chooseEvent(id:number){setEventId(id);setAutoRound(true);setRoundId(null);setResult(null);try{localStorage.setItem(EVENT_KEY,String(id));}catch{}}
   useEffect(()=>{roundRef.current=roundId;},[roundId]);
   useEffect(()=>()=>{stop();audioRef.current?.close().catch(()=>{});},[]);
 
@@ -125,11 +135,16 @@ export default function CheckinTab({rounds,onChecked,onLogin}:{rounds:AdminRound
   }
 
   const selected=rounds.find(r=>r.id===roundId);
-  if(!rounds.length)return <section className="panel"><div className="empty"><strong>まだ回がありません</strong><p>「回の管理」から回を登録してください。</p></div></section>;
+  if(!all.length)return <section className="panel"><div className="empty"><strong>まだ回がありません</strong><p>「回の管理」から回を登録してください。</p></div></section>;
   return <div className="checkin-layout">
     <section className="panel checkin-camera">
-      <div className="panel-heading"><h2><Camera size={18}/>読み取り</h2>
-        <select className="filter-select" value={roundId??''} onChange={e=>{setRoundId(Number(e.target.value));setResult(null);}} aria-label="受付する回">{rounds.map(r=><option key={r.id} value={r.id}>{r.label}（開演 {r.starts_time}）{r.status==='finished'?'・終了':''}</option>)}</select>
+      <div className="panel-heading"><h2><Camera size={18}/>読み取り</h2></div>
+      <div className="checkin-pickers">
+        <label><span>イベント</span><select className="filter-select" value={event?.id??''} onChange={e=>chooseEvent(Number(e.target.value))} aria-label="受付するイベント">{usable.map(ev=><option key={ev.id} value={ev.id}>{ev.label}{ev.venue?`（${ev.venue}）`:''}</option>)}</select></label>
+        <label><span>回{autoRound&&<em>自動</em>}</span><select className="filter-select" value={autoRound?'auto':roundId??''} onChange={e=>{if(e.target.value==='auto'){setAutoRound(true);setRoundId(best);}else{setAutoRound(false);setRoundId(Number(e.target.value));}setResult(null);}} aria-label="受付する回">
+          <option value="auto">自動（いまの回：{rounds.find(r=>r.id===best)?.label??'—'}）</option>
+          {rounds.map(r=><option key={r.id} value={r.id}>{r.label}（開演 {r.starts_time}）{r.status==='finished'?'・終了':''}</option>)}
+        </select></label>
       </div>
       {selected&&<p className="checkin-round">受付済み <strong>{fmt(selected.checked_in_count??0)}</strong> / 有効 {fmt(selected.active_count)} 枚<span>子ども {fmt(selected.checked_in_people??0)} / {fmt(selected.used_people)} 名</span><span className={`status-chip status-${selected.status}`}><span/>{STATUS_LABELS[selected.status]}</span></p>}
       <div className={`checkin-video ${camera==='on'?'on':''} ${facing==='user'?'mirror':''}`}>

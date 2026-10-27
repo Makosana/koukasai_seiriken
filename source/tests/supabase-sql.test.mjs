@@ -6,7 +6,7 @@ import {readFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {PGlite} from '@electric-sql/pglite';
 
-const migrations=['001_init.sql','002_children.sql','003_name.sql','004_checkin.sql'].map(f=>readFileSync(new URL('../../supabase/migrations/'+f,import.meta.url),'utf8'));
+const migrations=['001_init.sql','002_children.sql','003_name.sql','004_checkin.sql','005_events_waitlist.sql'].map(f=>readFileSync(new URL('../../supabase/migrations/'+f,import.meta.url),'utf8'));
 const STAFF='00000000-0000-4000-8000-000000000001';
 const jst=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'});
 const day=offset=>jst.format(new Date(Date.now()+offset*86400000));
@@ -21,6 +21,7 @@ async function setup(){
     grant execute on function auth.uid() to anon, authenticated;
     grant usage on schema public to anon, authenticated;`);
   for(const m of migrations)await db.exec(m);
+  await db.exec("insert into public.events(label, venue) values ('ステージ', '体育館')");
   return db;
 }
 async function as(db,role,sql,params=[]){
@@ -37,7 +38,9 @@ async function fails(promise,code){
 }
 const kids=n=>JSON.stringify({high_school:n});
 const op=(db,body)=>call(db,'staff','admin_operation',[JSON.stringify(body)]);
-const round={action:'create',label:'第1回',startsTime:'23:59',opensTime:'00:00',closesTime:'23:59',capacity:10,maxParty:4,finishAfterMinutes:0};
+const round={action:'create',eventId:1,label:'第1回',startsTime:'23:59',opensTime:'00:00',closesTime:'23:59',capacity:10,maxParty:4,finishAfterMinutes:0,durationMinutes:1};
+// 時間の重なりを試す回。23時台に始まるので、このテストは日本時間23時より前に実行すること
+const late={...round,opensTime:'00:00',closesTime:'23:59',finishAfterMinutes:600};
 
 test('来場者は表を直接読めず、運営用の関数も呼べない', async()=>{
   const db=await setup();
@@ -214,4 +217,151 @@ test('運営操作の検証と記録の保護', async()=>{
   const log=await db.query('select action, actor from public.operations order by id');
   assert.deepEqual(log.rows.map(r=>r.action),['create','create','delete']);
   assert.equal(log.rows[0].actor,STAFF);
+});
+
+test('イベント: 作成・変更・削除と、回はイベントに属する', async()=>{
+  const db=await setup();
+  const ev=await op(db,{action:'event_create',label:'ダンス',venue:'中庭',notice:'雨天時は体育館'});
+  await fails(op(db,{action:'event_create',label:''}),'invalid');
+  await op(db,{action:'event_update',id:ev.id,label:'ダンス部',venue:'中庭',notice:''});
+  await fails(op(db,{...round,eventId:999}),'invalid');
+  await fails(op(db,{...round,eventId:undefined}),'invalid');
+  await fails(op(db,{...round,durationMinutes:0}),'invalid');
+  const {id}=await op(db,{...round,eventId:ev.id,startsTime:'23:00',durationMinutes:45});
+  const s=await call(db,'anon','public_state');
+  assert.deepEqual(s.events.map(e=>e.label),['ステージ','ダンス部']);
+  assert.equal(s.events[1].venue,'中庭');
+  const r=s.rounds[0];
+  assert.equal(r.event_id,ev.id);assert.equal(r.duration_minutes,45);assert.equal(r.ends_time,'23:45');
+  assert.equal(r.waiting_count,0);assert.equal(r.waitlist_open,false);
+  await fails(op(db,{action:'event_delete',id:ev.id}),'invalid');
+  await op(db,{action:'delete',id});
+  await op(db,{action:'event_delete',id:ev.id});
+  assert.equal((await call(db,'anon','public_state')).events.length,1);
+  const t=(await call(db,'anon','issue_ticket',[(await op(db,round)).id,kids(1),0,randomUUID(),randomUUID()])).ticket;
+  assert.equal(t.event_label,'ステージ');assert.equal(t.venue,'体育館');
+});
+
+test('時間の重なり: 開演〜終演が重なる回の整理券は同じ端末で持てない', async()=>{
+  const db=await setup();
+  const a=(await op(db,{...late,label:'A',startsTime:'23:00',durationMinutes:20})).id;
+  const b=(await op(db,{...late,label:'B',startsTime:'23:10',durationMinutes:10})).id;
+  const c=(await op(db,{...late,label:'C',startsTime:'23:20',durationMinutes:10})).id;
+  const device=randomUUID();
+  const issue=(id,d=device)=>call(db,'anon','issue_ticket',[id,kids(1),0,d,randomUUID()]);
+  const t=(await issue(a)).ticket;
+  await fails(issue(b),'overlap');
+  await assert.rejects(issue(b),/A/);
+  await issue(c);
+  await issue(b,randomUUID());
+  await call(db,'anon','cancel_ticket',[t.id,t.token]);
+  await issue(b);
+});
+
+test('キャンセル待ち: 満員のときだけ登録でき、空きが出ると登録順に繰り上がる', async()=>{
+  const db=await setup();
+  const id=(await op(db,{...late,startsTime:'23:00',capacity:4,maxParty:4})).id;
+  const [d1,d2,d3,d4,d5]=Array.from({length:5},()=>randomUUID());
+  const issue=(d,n=1)=>call(db,'anon','issue_ticket',[id,kids(n),0,d,randomUUID()]);
+  const join=(d,n=1,request=randomUUID(),roundId=id)=>call(db,'anon','join_waitlist',[roundId,kids(n),0,d,request]);
+  const pub=async()=>(await call(db,'anon','public_state')).rounds.find(r=>r.id===id);
+  await fails(join(d2),'open');
+  const t1=(await issue(d1,4)).ticket;
+  assert.equal((await pub()).waitlist_open,true);
+  await fails(join(d1),'already');
+  const request=randomUUID();
+  const w2=(await join(d2,2,request)).entry;
+  assert.equal(w2.status,'waiting');assert.equal(w2.position,1);assert.ok(w2.token);
+  assert.equal((await join(d2,2,request)).replayed,true);
+  await fails(join(randomUUID(),2,request),'request_conflict');
+  await fails(join(d2),'already_waiting');
+  await fails(join(d5,5),'party');
+  const w3=(await join(d3,3)).entry;
+  const w4=(await join(d4,1)).entry;
+  assert.equal(w4.position,3);
+  let p=await pub();
+  assert.equal(p.waiting_count,3);assert.equal(p.status,'full');assert.equal(p.remaining,0);
+
+  await call(db,'anon','cancel_ticket',[t1.id,t1.token]);
+  const look=async(w)=>(await call(db,'anon','lookup_waitlist',[JSON.stringify([{id:w.id,token:w.token}])])).entries[0];
+  const got2=await look(w2);
+  assert.equal(got2.status,'promoted');assert.equal(got2.ticket.number,2);assert.ok(got2.ticket.token);assert.ok(got2.ticket.checkin_code);
+  assert.equal((await look(w3)).position,1);
+  assert.equal((await look(w4)).status,'waiting');
+  p=await pub();
+  assert.equal(p.status,'full');assert.equal(p.remaining,0);
+  await fails(issue(d5),'full');
+  const admin=(await call(db,'staff','admin_state')).rounds.find(r=>r.id===id);
+  assert.equal(admin.remaining,2);assert.equal(admin.waiting_count,2);assert.equal(admin.waiting_people,4);assert.equal(admin.promoted_count,1);
+
+  await fails(call(db,'anon','leave_waitlist',[w3.id,'wrong']),'forbidden');
+  const left=await call(db,'anon','leave_waitlist',[w3.id,w3.token]);
+  assert.equal(left.entry.status,'cancelled');
+  assert.equal((await call(db,'anon','leave_waitlist',[w3.id,w3.token])).replayed,true);
+  assert.equal((await look(w4)).status,'promoted');
+  p=await pub();
+  assert.equal(p.status,'open');assert.equal(p.remaining,1);assert.equal(p.waitlist_open,false);
+
+  const list=(await call(db,'staff','admin_list_waitlist',[id])).entries;
+  assert.deepEqual(list.map(x=>x.status),['promoted','cancelled','promoted']);
+  assert.equal(list[0].ticket_number,2);assert.equal('token' in list[0],false);
+  const state=await call(db,'staff','admin_state');
+  assert.equal(state.totals.promoted,2);assert.equal(state.totals.waiting,0);
+  const rows=await call(db,'staff','admin_export_tickets');
+  assert.equal(rows.filter(r=>r.via_waitlist).length,2);assert.equal(rows[0].event_label,'ステージ');
+  await assert.rejects(db.query("update public.waitlist set status='waiting'"),/状態の変更/);
+  await assert.rejects(db.query('delete from public.waitlist'),/削除できません/);
+  const log=await db.query("select count(*)::int as n from public.operations where action='promote'");
+  assert.equal(log.rows[0].n,2);
+});
+
+test('キャンセル待ち: 先頭が入れなければ後ろも待つ・定員を増やすと繰り上がる・受付停止', async()=>{
+  const db=await setup();
+  const id=(await op(db,{...late,startsTime:'23:00',capacity:4,maxParty:4})).id;
+  const issue=(d,n)=>call(db,'anon','issue_ticket',[id,kids(n),0,d,randomUUID()]);
+  const join=(d,n)=>call(db,'anon','join_waitlist',[id,kids(n),0,d,randomUUID()]);
+  const a=(await issue(randomUUID(),1)).ticket;
+  await issue(randomUUID(),3);
+  const head=(await join(randomUUID(),3)).entry;
+  const small=(await join(randomUUID(),1)).entry;
+  await call(db,'anon','cancel_ticket',[a.id,a.token]);
+  const look=async(w)=>(await call(db,'anon','lookup_waitlist',[JSON.stringify([{id:w.id,token:w.token}])])).entries[0];
+  assert.equal((await look(head)).status,'waiting');
+  assert.equal((await look(small)).status,'waiting');
+  await op(db,{...late,action:'update',id,startsTime:'23:00',capacity:7,maxParty:4});
+  assert.equal((await look(head)).status,'promoted');
+  assert.equal((await look(small)).status,'promoted');
+  await op(db,{action:'waitlist_off',id});
+  const pub=(await call(db,'anon','public_state')).rounds[0];
+  assert.equal(pub.waitlist_open,false);
+  await fails(join(randomUUID(),1),'waitlist_off');
+  await op(db,{action:'waitlist_on',id});
+  await join(randomUUID(),1);
+  await op(db,{action:'settings',eventDate:day(-1)});
+  const after=(await call(db,'staff','admin_list_waitlist',[id])).entries;
+  assert.equal(after.at(-1).status,'expired');
+  assert.equal((await call(db,'staff','admin_state')).rounds[0].waiting_count,0);
+});
+
+test('キャンセル待ち: 時間が重なる整理券があると登録できず、繰り上がると重なる待ちは外れる', async()=>{
+  const db=await setup();
+  const x=(await op(db,{...late,label:'X',startsTime:'23:00',durationMinutes:30,capacity:1,maxParty:1})).id;
+  const y=(await op(db,{...late,label:'Y',startsTime:'23:15',durationMinutes:30,capacity:1,maxParty:1})).id;
+  const z=(await op(db,{...late,label:'Z',startsTime:'23:15',durationMinutes:30,capacity:5,maxParty:1})).id;
+  const issue=(id,d)=>call(db,'anon','issue_ticket',[id,kids(1),0,d,randomUUID()]);
+  const join=(id,d)=>call(db,'anon','join_waitlist',[id,kids(1),0,d,randomUUID()]);
+  const tx=(await issue(x,randomUUID())).ticket;
+  await issue(y,randomUUID());
+  const me=randomUUID();
+  const wx=(await join(x,me)).entry;
+  const wy=(await join(y,me)).entry;
+  await call(db,'anon','cancel_ticket',[tx.id,tx.token]);
+  const look=async(w)=>(await call(db,'anon','lookup_waitlist',[JSON.stringify([{id:w.id,token:w.token}])])).entries[0];
+  assert.equal((await look(wx)).status,'promoted');
+  assert.equal((await look(wy)).status,'removed');
+  await fails(join(y,me),'overlap');
+  const other=randomUUID();
+  const wy2=(await join(y,other)).entry;
+  await issue(z,other);
+  assert.equal((await look(wy2)).status,'removed');
 });

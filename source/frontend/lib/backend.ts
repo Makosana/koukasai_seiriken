@@ -1,7 +1,8 @@
 import {api,ApiError} from './api';
-import type {AdminState,AdminTicket,Children,PublicState,Ticket} from './types';
+import type {AdminState,AdminTicket,AdminWaitEntry,Children,PublicState,Ticket,WaitEntry} from './types';
 
 export type Saved={id:string;token:string;ticket?:Ticket};
+export type SavedWait={id:string;token:string;entry?:WaitEntry};
 export type IssueInput={roundId:number;children:Children;guardians:number;deviceId:string;requestId:string};
 export type LoginInput={code?:string;email?:string;password?:string};
 export type CheckinInput={roundId:number;code?:string;number?:number};
@@ -12,12 +13,16 @@ export type Backend={
   lookup(items:Saved[]):Promise<{now:string;tickets:(Ticket|null)[]}>;
   findRequest(requestId:string,deviceId:string):Promise<{ticket:Ticket|null}>;
   cancel(id:string,token:string):Promise<{ticket:Ticket;replayed:boolean}>;
+  joinWaitlist(input:IssueInput):Promise<{entry:WaitEntry;replayed:boolean}>;
+  lookupWaitlist(items:SavedWait[]):Promise<{now:string;entries:(WaitEntry|null)[]}>;
+  leaveWaitlist(id:string,token:string):Promise<{entry:WaitEntry;replayed:boolean}>;
   adminState():Promise<AdminState>;
   login(input:LoginInput):Promise<void>;
   logout():Promise<void>;
   adminOperation(body:Record<string,unknown>):Promise<void>;
   listTickets(roundId:number,number?:string):Promise<AdminTicket[]>;
   adminCancel(id:string):Promise<void>;
+  listWaitlist(roundId:number):Promise<AdminWaitEntry[]>;
   checkin(input:CheckinInput):Promise<{ticket:AdminTicket;replayed:boolean}>;
   exportCsv():Promise<{blob:Blob;filename:string}>;
   backup():Promise<string>;
@@ -31,6 +36,9 @@ const localBackend:Backend={
   lookup:items=>api('/api/public/tickets',{items}),
   findRequest:(requestId,deviceId)=>api('/api/public/request',{requestId,deviceId}),
   cancel:(id,token)=>api('/api/public/cancel',{id,token}),
+  async joinWaitlist(){throw new ApiError('キャンセル待ちはオンライン版だけで使えます。',400,'invalid');},
+  async lookupWaitlist(items){return {now:new Date().toISOString(),entries:items.map(()=>null)};},
+  async leaveWaitlist(){throw new ApiError('キャンセル待ちはオンライン版だけで使えます。',400,'invalid');},
   async adminState(){const s=await api<AdminState>('/api/admin/state');return {...s,server:{...s.server,mode:'local'}};},
   async login(input){await api('/api/admin/login',{code:input.code??''});},
   async logout(){},
@@ -40,6 +48,7 @@ const localBackend:Backend={
     return (await api<{tickets:AdminTicket[]}>(`/api/admin/tickets?${q}`)).tickets;
   },
   async adminCancel(id){await api('/api/admin/cancel',{id});},
+  async listWaitlist(){return [];},
   async checkin(){throw new ApiError('入場受付はオンライン版（Supabase）だけで使えます。',400,'invalid');},
   async exportCsv(){
     let r:Response;

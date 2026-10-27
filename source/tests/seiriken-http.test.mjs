@@ -18,6 +18,7 @@ async function setup(t,options={}){
   const make=()=>startApplication({root:dir,publicDirectory,port:0,now:()=>clock.current,issueRateLimit:100000,...options});
   const app=await make();const applications=[app];
   t.after(async()=>{for(const instance of applications)await instance.close();rmSync(dir,{recursive:true,force:true});});
+  if(!options.noEvent)assert.equal((await admin(app,{action:'event_create',label:'ステージ',venue:'体育館'})).value.id,1);
   return {app,dir,clock,make:async()=>{const instance=await make();applications.push(instance);return instance;}};
 }
 async function call(base,path,body,headers={}){
@@ -28,14 +29,14 @@ const admin=(app,body)=>call(app.url,'api/admin/operation',body);
 const issue=(app,roundId,partySize=1,deviceId=randomUUID(),requestId=randomUUID())=>call(app.url,'api/public/issue',{roundId,children:{high_school:partySize},deviceId,requestId});
 const publicRound=async(app,id)=>(await call(app.url,'api/public/state')).value.rounds.find(r=>r.id===id);
 async function addRound(app,extra={}){
-  const r=await admin(app,{action:'create',label:'10:00の回',startsTime:'10:00',opensTime:'09:00',closesTime:'10:00',capacity:10,maxParty:4,finishAfterMinutes:30,...extra});
+  const r=await admin(app,{action:'create',eventId:1,label:'10:00の回',startsTime:'10:00',opensTime:'09:00',closesTime:'10:00',capacity:10,maxParty:4,finishAfterMinutes:30,durationMinutes:30,...extra});
   assert.equal(r.status,200,JSON.stringify(r.value));return r.value.id;
 }
 
 test('アカウント・ネット接続なしの起動、DB自動作成、画面と全ローカル資産',async t=>{
-  const {app,dir}=await setup(t);
+  const {app,dir}=await setup(t,{noEvent:true});
   const s=await call(app.url,'api/public/state');
-  assert.equal(s.status,200);assert.deepEqual(s.value.rounds,[]);assert.equal(s.value.eventDate,'2026-11-03');
+  assert.equal(s.status,200);assert.deepEqual(s.value.rounds,[]);assert.deepEqual(s.value.events,[]);assert.equal(s.value.eventDate,'2026-11-03');
   assert.ok(existsSync(join(dir,'data/seiriken.sqlite3')));
   assert.ok(readdirSync(join(dir,'backups')).some(x=>x.endsWith('_startup.sqlite3')));
   if(!existsSync(join(publicDirectory,'index.html'))){t.diagnostic('app/public が未ビルドのため画面資産の確認は省略');return;}
@@ -107,9 +108,9 @@ test('子どもの区分と保護者: 定員と1枚の上限は子どもだけ�
   assert.deepEqual(list.map(x=>x.guardians),[0,0,2]);
   assert.ok(list.every(x=>!('name' in x)));
   const csv=(await (await fetch(app.url+'api/admin/csv')).text()).replace(/^\uFEFF/,'').split('\r\n');
-  assert.equal(csv[0],'回,開演,番号,子ども,未就学児,小学生,中学生,高校生,保護者,状態,発行時刻,取消時刻,取り消した人,整理券ID');
-  assert.match(csv[1],/^10:00の回,10:00,1,3,1,2,0,0,2,有効,/);
-  assert.match(csv[2],/^10:00の回,10:00,2,2,0,0,1,1,0,有効,/);
+  assert.equal(csv[0],'イベント,回,開演,番号,子ども,未就学児,小学生,中学生,高校生,保護者,状態,発行時刻,取消時刻,取り消した人,整理券ID');
+  assert.match(csv[1],/^ステージ,10:00の回,10:00,1,3,1,2,0,0,2,有効,/);
+  assert.match(csv[2],/^ステージ,10:00の回,10:00,2,2,0,0,1,1,0,有効,/);
   assert.equal(app.storage.sqlite.prepare("SELECT COUNT(*) AS n FROM tickets WHERE name<>''").get().n,0);
 });
 
@@ -131,7 +132,9 @@ test('v1のデータは、起動時に区分・保護者の列を追加して引
   try{
     const row=storage.sqlite.prepare('SELECT party_size,preschool,guardians,name FROM tickets').get();
     assert.deepEqual({...row},{party_size:2,preschool:0,guardians:0,name:''});
-    assert.equal(storage.sqlite.prepare('SELECT MAX(version) AS v FROM app_migrations').get().v,4);
+    assert.equal(storage.sqlite.prepare('SELECT MAX(version) AS v FROM app_migrations').get().v,5);
+    const round=storage.sqlite.prepare('SELECT r.duration_minutes,e.label FROM rounds r JOIN events e ON e.id=r.event_id').get();
+    assert.deepEqual({...round},{duration_minutes:60,label:'ステージ公演'});
     assert.throws(()=>storage.sqlite.prepare('UPDATE tickets SET guardians=3').run(),/取消以外/);
     assert.throws(()=>storage.sqlite.prepare("UPDATE tickets SET name='x'").run(),/取消以外/);
   }finally{storage.close();}
@@ -178,6 +181,31 @@ test('取消: 本人は開演前まで、スタッフはいつでも。番号は
   assert.equal(found.value.ticket,null);
 });
 
+test('イベントと時間の重なり: 開演〜終演が重なる回の整理券は同じ端末で持てない',async t=>{
+  const {app}=await setup(t);
+  const dance=(await admin(app,{action:'event_create',label:'ダンス',venue:'中庭',notice:'雨天時は体育館'})).value.id;
+  const a=await addRound(app,{label:'A',startsTime:'10:00',closesTime:'10:00',durationMinutes:40});
+  const b=await addRound(app,{eventId:dance,label:'B',startsTime:'10:30',closesTime:'10:30',durationMinutes:20});
+  const c=await addRound(app,{eventId:dance,label:'C',startsTime:'10:40',closesTime:'10:40',durationMinutes:20});
+  const s=(await call(app.url,'api/public/state')).value;
+  assert.deepEqual(s.events.map(e=>[e.label,e.venue]),[['ステージ','体育館'],['ダンス','中庭']]);
+  const rb=s.rounds.find(r=>r.id===b);
+  assert.equal(rb.event_id,dance);assert.equal(rb.ends_time,'10:50');assert.equal(rb.waitlist_open,false);
+  const device=randomUUID();
+  const ta=(await issue(app,a,1,device)).value.ticket;
+  assert.equal(ta.event_label,'ステージ');assert.equal(ta.venue,'体育館');assert.equal(ta.ends_time,'10:40');
+  const blocked=await issue(app,b,1,device);
+  assert.equal(blocked.value.code,'overlap');assert.match(blocked.value.error??blocked.value.message??'',/A/);
+  assert.equal((await issue(app,c,1,device)).status,200);
+  await call(app.url,'api/public/cancel',{id:ta.id,token:ta.token});
+  assert.equal((await issue(app,b,1,device)).value.code,'overlap');
+  assert.equal((await admin(app,{action:'event_delete',id:dance})).status,409);
+  assert.equal((await admin(app,{action:'event_update',id:dance,label:'ダンス部',venue:'',notice:''})).status,200);
+  assert.equal((await admin(app,{action:'waitlist_on',id:a})).status,400);
+  const empty=(await admin(app,{action:'event_create',label:'空'})).value.id;
+  assert.equal((await admin(app,{action:'event_delete',id:empty})).status,200);
+});
+
 function rawIssue(app,agent,body){
   return new Promise((resolveRequest,reject)=>{
     const payload=JSON.stringify(body);
@@ -207,7 +235,9 @@ test('同時に400件の申し込みが来ても、番号の重複と定員超�
 test('運営操作の検証: 発行済み人数より少ない定員・発行済みの回の削除・不正な日付を拒否',async t=>{
   const {app}=await setup(t);const id=await addRound(app);
   await issue(app,id,4);
-  const base={action:'update',id,label:'10:00の回',startsTime:'10:00',opensTime:'09:00',closesTime:'10:00',maxParty:4,finishAfterMinutes:30};
+  const base={action:'update',id,eventId:1,label:'10:00の回',startsTime:'10:00',opensTime:'09:00',closesTime:'10:00',maxParty:4,finishAfterMinutes:30,durationMinutes:30};
+  assert.equal((await admin(app,{...base,capacity:10,eventId:9})).status,400);
+  assert.equal((await admin(app,{...base,capacity:10,durationMinutes:0})).status,400);
   assert.equal((await admin(app,{...base,capacity:3})).status,409);
   assert.equal((await admin(app,{...base,capacity:4})).status,200);
   assert.equal((await admin(app,{...base,capacity:20,opensTime:'10:00'})).status,400);
