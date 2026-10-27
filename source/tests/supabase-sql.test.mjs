@@ -6,7 +6,7 @@ import {readFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {PGlite} from '@electric-sql/pglite';
 
-const migrations=['001_init.sql','002_children.sql','003_name.sql','004_checkin.sql','005_events_waitlist.sql'].map(f=>readFileSync(new URL('../../supabase/migrations/'+f,import.meta.url),'utf8'));
+const migrations=['001_init.sql','002_children.sql','003_name.sql','004_checkin.sql','005_events_waitlist.sql','006_cancel_checked_in.sql'].map(f=>readFileSync(new URL('../../supabase/migrations/'+f,import.meta.url),'utf8'));
 const STAFF='00000000-0000-4000-8000-000000000001';
 const jst=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'});
 const day=offset=>jst.format(new Date(Date.now()+offset*86400000));
@@ -152,7 +152,7 @@ test('入場受付: 選んだ回の整理券を、受付開始から終了まで
   const again=await checkin([id,t.checkin_code,null]);
   assert.equal(again.replayed,true);assert.equal(again.ticket.checked_in_at,done.ticket.checked_in_at);
   await fails(call(db,'anon','cancel_ticket',[t.id,t.token]),'checked_in');
-  await fails(call(db,'staff','admin_cancel',[t.id]),'checked_in');
+  await fails(call(db,'staff','admin_cancel',[t.id]),'password');
   const byNumber=(await issue()).ticket;
   assert.equal((await checkin([id,null,byNumber.number])).ticket.id,byNumber.id);
   await fails(checkin([id,null,99]),'not_found');
@@ -172,6 +172,37 @@ test('入場受付: 選んだ回の整理券を、受付開始から終了まで
   await fails(checkin([id,late.checkin_code,null]),'finished');
   const log=await db.query("select count(*)::int as n from public.operations where action='checkin'");
   assert.equal(log.rows[0].n,2);
+});
+
+test('受付済みの取消: スタッフが7桁の取消用パスワードを入れたときだけ取り消せる', async()=>{
+  const db=await setup();
+  const {id}=await op(db,{...round,capacity:4});
+  const t=(await call(db,'anon','issue_ticket',[id,kids(2),0,randomUUID(),randomUUID()])).ticket;
+  const done=(await call(db,'staff','admin_checkin',[id,t.checkin_code,null])).ticket;
+  await assert.rejects(call(db,'staff','admin_cancel',[t.id,'7654321']),e=>e.hint==='password'&&/設定されていません/.test(e.message));
+  await assert.rejects(db.query("select private.set_cancel_password('12345')"),/7桁/);
+  await db.query("select private.set_cancel_password('7654321')");
+  const stored=await db.query("select value from private.secrets where key='cancel_password'");
+  assert.match(stored.rows[0].value,/^[0-9a-f]{64}$/);
+  await assert.rejects(as(db,'staff',"select private.set_cancel_password('1111111')"),/permission denied/);
+  await assert.rejects(as(db,'staff',"select * from private.secrets"),/permission denied/);
+  await fails(call(db,'staff','admin_cancel',[t.id]),'password');
+  await fails(call(db,'staff','admin_cancel',[t.id,'1234567']),'password');
+  await fails(call(db,'staff','admin_cancel',[t.id,'765432']),'password');
+  await assert.rejects(call(db,'anon','admin_cancel',[t.id,'7654321']),/permission denied/);
+  await fails(call(db,'anon','cancel_ticket',[t.id,t.token]),'checked_in');
+  const res=await call(db,'staff','admin_cancel',[t.id,'7654321']);
+  assert.equal(res.replayed,false);assert.equal(res.ticket.status,'cancelled');assert.equal(res.ticket.cancelled_by,'staff');
+  assert.equal(res.ticket.checked_in_at,done.checked_in_at);
+  assert.equal((await call(db,'staff','admin_cancel',[t.id,'7654321'])).replayed,true);
+  const r=(await call(db,'staff','admin_state')).rounds.find(x=>x.id===id);
+  assert.equal(r.checked_in_count,0);assert.equal(r.active_count,0);assert.equal(r.remaining,4);
+  await fails(call(db,'staff','admin_checkin',[id,t.checkin_code,null]),'cancelled');
+  const visitor=(await call(db,'anon','lookup_tickets',[JSON.stringify([{id:t.id,token:t.token}])])).tickets[0];
+  assert.equal(visitor.status,'cancelled');assert.equal(visitor.cancelled_by,'staff');
+  await assert.rejects(db.query("update public.tickets set status='active', cancelled_at=null, cancelled_by=null"),/以外の変更/);
+  const log=await db.query("select details from public.operations where action='staff_cancel'");
+  assert.equal(log.rows[0].details.checked_in,true);
 });
 
 test('取消: 本人は開演前だけ、スタッフはいつでも。取消番号は再利用しない', async()=>{

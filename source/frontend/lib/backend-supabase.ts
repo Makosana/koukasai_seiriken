@@ -17,7 +17,7 @@ const networkError=()=>new ApiError('通信を確認できませんでした。�
 type RpcError={message:string;code?:string;hint?:string|null};
 function toApiError(error:RpcError){
   const code=error.hint||'';
-  if(code&&code in STATUS||['before','paused','closed','full','remaining','already','started','request_conflict','checked_in','wrong_round','cancelled','finished','invalid_code','overlap','open','already_waiting','waitlist_off'].includes(code))
+  if(code&&code in STATUS||['before','paused','closed','full','remaining','already','started','request_conflict','checked_in','wrong_round','cancelled','finished','invalid_code','overlap','open','already_waiting','waitlist_off','password'].includes(code))
     return new ApiError(error.message,STATUS[code]??409,code);
   if(error.code==='42501'||error.code==='PGRST301'||error.code==='PGRST303')return new ApiError('運営画面を使うにはログインしてください。',401,'login');
   if(!error.code)return networkError();
@@ -70,7 +70,7 @@ export const supabaseBackend:Backend={
   async listTickets(roundId,number){
     return (await rpc<{tickets:AdminTicket[]}>('admin_list_tickets',{p_round_id:roundId,p_number:number?Number(number):null})).tickets;
   },
-  async adminCancel(id){await rpc('admin_cancel',{p_id:id});},
+  async adminCancel(id,password){await rpc('admin_cancel',password?{p_id:id,p_password:password}:{p_id:id});},
   async listWaitlist(roundId){return (await rpc<{entries:AdminWaitEntry[]}>('admin_list_waitlist',{p_round_id:roundId})).entries;},
   checkin:input=>rpc('admin_checkin',{p_round_id:input.roundId,p_code:input.code??null,p_number:input.number??null}),
   async exportCsv(){

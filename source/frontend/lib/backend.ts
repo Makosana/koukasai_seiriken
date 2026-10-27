@@ -21,7 +21,7 @@ export type Backend={
   logout():Promise<void>;
   adminOperation(body:Record<string,unknown>):Promise<void>;
   listTickets(roundId:number,number?:string):Promise<AdminTicket[]>;
-  adminCancel(id:string):Promise<void>;
+  adminCancel(id:string,password?:string):Promise<void>;
   listWaitlist(roundId:number):Promise<AdminWaitEntry[]>;
   checkin(input:CheckinInput):Promise<{ticket:AdminTicket;replayed:boolean}>;
   exportCsv():Promise<{blob:Blob;filename:string}>;

@@ -95,6 +95,7 @@ export default function Admin(){
   const [dateDraft,setDateDraft]=useState('');
   const [ticketRound,setTicketRound]=useState<number|null>(null),[numberDraft,setNumberDraft]=useState(''),[numberQuery,setNumberQuery]=useState('');
   const [list,setList]=useState<AdminTicket[]>([]),[listBusy,setListBusy]=useState(false),[cancelTarget,setCancelTarget]=useState<AdminTicket|null>(null);
+  const [cancelPassword,setCancelPassword]=useState('');
   const toastTimer=useRef<ReturnType<typeof setTimeout>|null>(null),listSerial=useRef(0);
 
   const notify=useCallback((text:string,error=false)=>{setToast({text,error});if(toastTimer.current)clearTimeout(toastTimer.current);toastTimer.current=setTimeout(()=>setToast(null),error?9000:5000);},[]);
@@ -188,8 +189,8 @@ export default function Admin(){
   }
   async function staffCancel(t:AdminTicket){
     setBusy(true);
-    try{await (await backend()).adminCancel(t.id);notify(`No.${t.number} を取り消しました。`);setCancelTarget(null);await refresh();await loadTickets();}
-    catch(e){notify(e instanceof Error?e.message:'取り消せませんでした。',true);}
+    try{await (await backend()).adminCancel(t.id,t.checked_in_at?cancelPassword:undefined);notify(`No.${t.number} を取り消しました。`);setCancelTarget(null);setCancelPassword('');await refresh();await loadTickets();}
+    catch(e){if(e instanceof ApiError&&e.code==='password')setCancelPassword('');notify(e instanceof Error?e.message:'取り消せませんでした。',true);}
     finally{setBusy(false);}
   }
   async function downloadCsv(){
@@ -318,10 +319,10 @@ export default function Admin(){
             <td><strong className="ticket-no">No.{t.number}</strong></td>
             <td className="mono">{t.party_size} 名{t.children&&childSummary(t.children)&&<span className="table-note">{childSummary(t.children)}</span>}</td>
             <td className="mono">{t.guardians?`${t.guardians} 名`:'—'}</td>
-            <td>{t.status==='active'&&t.checked_in_at?<><span className="kind-pill checked">受付済み</span><span className="table-note">{time(t.checked_in_at)}</span></>:<><span className={`kind-pill ${t.status==='active'?'sale':'void'}`}>{t.status==='active'?(CHECKIN?'有効（未受付）':'有効'):t.cancelled_by==='staff'?'取消（スタッフ）':'取消（本人）'}</span>{t.cancelled_at&&<span className="table-note">{time(t.cancelled_at)}</span>}</>}</td>
+            <td>{t.status==='active'&&t.checked_in_at?<><span className="kind-pill checked">受付済み</span><span className="table-note">{time(t.checked_in_at)}</span></>:<><span className={`kind-pill ${t.status==='active'?'sale':'void'}`}>{t.status==='active'?(CHECKIN?'有効（未受付）':'有効'):t.cancelled_by==='staff'?'取消（スタッフ）':'取消（本人）'}</span>{t.cancelled_at&&<span className="table-note">{time(t.cancelled_at)}{t.checked_in_at?`（${time(t.checked_in_at)} に受付済みだった整理券）`:''}</span>}</>}</td>
             <td className="mono">{time(t.created_at)}</td>
             <td className="mono muted">{t.device}</td>
-            <td className="right">{t.status==='active'&&!t.checked_in_at&&<button className="button small void-button" disabled={busy} onClick={()=>setCancelTarget(t)}>取り消す</button>}</td>
+            <td className="right">{t.status==='active'&&<button className="button small void-button" disabled={busy} onClick={()=>{setCancelPassword('');setCancelTarget(t);}}>取り消す</button>}</td>
           </tr>)}</tbody></table>
           {listBusy&&!list.length&&<div className="table-loading"><RefreshCw size={16} className="spin"/>読み込み中</div>}
           {!listBusy&&!list.length&&<div className="empty"><div className="empty-icon"><TicketIcon size={26}/></div><strong>{numberQuery?`No.${numberQuery} の整理券はありません`:'まだ整理券がありません'}</strong><p>{numberQuery?'番号と回を確かめてください。存在しない番号の場合は、偽造の可能性があります。':'来場者が整理券を取ると、ここに表示されます。'}</p></div>}
@@ -466,9 +467,14 @@ export default function Admin(){
     {cancelTarget&&<Dialog title="整理券を取り消す" busy={busy} onClose={()=>setCancelTarget(null)}>
       <span className="dialog-symbol red"><XCircle size={24}/></span>
       <h2>No.{cancelTarget.number} を取り消しますか？</h2>
-      <div className="confirm-values"><div><span>回</span><strong>{cancelTarget.round_label}</strong></div><div><span>人数</span><strong>{partyText(cancelTarget)}</strong></div><div><span>発行時刻</span><strong>{time(cancelTarget.created_at)}</strong></div></div>
+      <div className="confirm-values"><div><span>回</span><strong>{cancelTarget.round_label}</strong></div><div><span>人数</span><strong>{partyText(cancelTarget)}</strong></div><div><span>{cancelTarget.checked_in_at?'受付時刻':'発行時刻'}</span><strong>{time(cancelTarget.checked_in_at??cancelTarget.created_at)}</strong></div></div>
       <p className="dialog-description">取り消すと、来場者のスマホにも「スタッフにより取り消された整理券」と表示されます。元に戻せません。</p>
-      <div className="dialog-buttons"><button className="button" disabled={busy} onClick={()=>setCancelTarget(null)}>やめる</button><button className="button destructive" disabled={busy} onClick={()=>staffCancel(cancelTarget)}>{busy&&<RefreshCw size={16} className="spin"/>}取り消す</button></div>
+      {cancelTarget.checked_in_at&&<>
+        <p className="field-hint negative">この整理券は、すでに入場受付が済んでいます。取り消すと受付済みの人数からも外れます。取り消すには、取消用のパスワード（7桁）を入力してください。</p>
+        <label className="form-label" htmlFor="cancel-password">取消用のパスワード</label>
+        <input id="cancel-password" className="text-input mono" type="password" inputMode="numeric" autoComplete="off" maxLength={7} value={cancelPassword} onChange={e=>/^\d{0,7}$/.test(e.target.value)&&setCancelPassword(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&cancelPassword.length===7&&!busy)staffCancel(cancelTarget);}}/>
+      </>}
+      <div className="dialog-buttons"><button className="button" disabled={busy} onClick={()=>setCancelTarget(null)}>やめる</button><button className="button destructive" disabled={busy||(!!cancelTarget.checked_in_at&&cancelPassword.length!==7)} onClick={()=>staffCancel(cancelTarget)}>{busy&&<RefreshCw size={16} className="spin"/>}取り消す</button></div>
     </Dialog>}
     <Toast toast={toast} onClose={()=>setToast(null)}/>
   </div>;
