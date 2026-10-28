@@ -206,6 +206,19 @@ test('イベントと時間の重なり: 開演〜終演が重なる回の整理
   assert.equal((await admin(app,{action:'event_delete',id:empty})).status,200);
 });
 
+test('整理券の一覧: 「すべて」を選ぶと、すべての回の整理券を新しい順に返す',async t=>{
+  const {app,clock}=await setup(t);
+  const dance=(await admin(app,{action:'event_create',label:'ダンス',venue:'中庭'})).value.id;
+  const a=await addRound(app),b=await addRound(app,{eventId:dance,label:'B',startsTime:'11:00',closesTime:'11:00'});
+  await issue(app,a);clock.current=at('09:31');await issue(app,b);clock.current=at('09:32');await issue(app,a);
+  const all=(await call(app.url,'api/admin/tickets?round=all')).value.tickets;
+  assert.deepEqual(all.map(x=>[x.event_label,x.round_label,x.number]),[['ステージ','10:00の回',2],['ダンス','B',1],['ステージ','10:00の回',1]]);
+  assert.ok(all.every(x=>x.device));
+  assert.equal((await call(app.url,'api/admin/tickets?round=all&number=1')).value.tickets.length,2);
+  assert.equal((await call(app.url,'api/admin/tickets?round=all&number=9')).value.tickets.length,0);
+  assert.equal((await call(app.url,'api/admin/tickets')).status,400);
+});
+
 function rawIssue(app,agent,body){
   return new Promise((resolveRequest,reject)=>{
     const payload=JSON.stringify(body);

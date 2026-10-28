@@ -6,7 +6,7 @@ import {readFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {PGlite} from '@electric-sql/pglite';
 
-const migrations=['001_init.sql','002_children.sql','003_name.sql','004_checkin.sql','005_events_waitlist.sql','006_cancel_checked_in.sql'].map(f=>readFileSync(new URL('../../supabase/migrations/'+f,import.meta.url),'utf8'));
+const migrations=['001_init.sql','002_children.sql','003_name.sql','004_checkin.sql','005_events_waitlist.sql','006_cancel_checked_in.sql','007_list_all_tickets.sql'].map(f=>readFileSync(new URL('../../supabase/migrations/'+f,import.meta.url),'utf8'));
 const STAFF='00000000-0000-4000-8000-000000000001';
 const jst=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'});
 const day=offset=>jst.format(new Date(Date.now()+offset*86400000));
@@ -227,6 +227,23 @@ test('取消: 本人は開演前だけ、スタッフはいつでも。取消番
   assert.equal(rows.length,2);assert.equal(rows[0].label,'第1回');
   const state=await call(db,'staff','admin_state');
   assert.equal(state.totals.cancelled,2);assert.equal(state.rounds[0].last_number,2);
+});
+
+test('整理券の一覧: 回を指定しないと、すべての回の整理券を新しい順に返す', async()=>{
+  const db=await setup();
+  await db.exec("insert into public.events(label, venue) values ('ダンス', '中庭')");
+  const a=(await op(db,round)).id,b=(await op(db,{...round,eventId:2,label:'第2回',startsTime:'23:58'})).id;
+  const issue=rid=>call(db,'anon','issue_ticket',[rid,kids(1),0,randomUUID(),randomUUID()]);
+  await issue(a);await issue(b);await issue(a);
+  const all=(await call(db,'staff','admin_list_tickets',[null,null])).tickets;
+  assert.deepEqual(all.map(t=>[t.event_label,t.round_label,t.number]),[['ステージ','第1回',2],['ダンス','第2回',1],['ステージ','第1回',1]]);
+  assert.ok(all.every(t=>t.device));
+  const ones=(await call(db,'staff','admin_list_tickets',[null,1])).tickets;
+  assert.deepEqual(ones.map(t=>t.round_id).sort(),[a,b].sort());
+  assert.equal((await call(db,'staff','admin_list_tickets',[null,9])).tickets.length,0);
+  assert.equal((await call(db,'staff','admin_list_tickets',[b,null])).tickets.length,1);
+  await fails(call(db,'staff','admin_list_tickets',[999,null]),'not_found');
+  await assert.rejects(call(db,'anon','admin_list_tickets',[null,null]),/permission denied/);
 });
 
 test('運営操作の検証と記録の保護', async()=>{

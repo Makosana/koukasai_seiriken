@@ -20,7 +20,7 @@ export type Backend={
   login(input:LoginInput):Promise<void>;
   logout():Promise<void>;
   adminOperation(body:Record<string,unknown>):Promise<void>;
-  listTickets(roundId:number,number?:string):Promise<AdminTicket[]>;
+  listTickets(roundId:number|null,number?:string):Promise<AdminTicket[]>;
   adminCancel(id:string,password?:string):Promise<void>;
   listWaitlist(roundId:number):Promise<AdminWaitEntry[]>;
   checkin(input:CheckinInput):Promise<{ticket:AdminTicket;replayed:boolean}>;
@@ -44,7 +44,7 @@ const localBackend:Backend={
   async logout(){},
   async adminOperation(body){await api('/api/admin/operation',body);},
   async listTickets(roundId,number){
-    const q=new URLSearchParams({round:String(roundId)});if(number)q.set('number',number);
+    const q=new URLSearchParams({round:roundId===null?'all':String(roundId)});if(number)q.set('number',number);
     return (await api<{tickets:AdminTicket[]}>(`/api/admin/tickets?${q}`)).tickets;
   },
   async adminCancel(id){await api('/api/admin/cancel',{id});},

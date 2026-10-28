@@ -93,7 +93,7 @@ export default function Admin(){
   const [eventFilter,setEventFilter]=useState<number|null>(null);
   const [waitList,setWaitList]=useState<AdminWaitEntry[]>([]);
   const [dateDraft,setDateDraft]=useState('');
-  const [ticketRound,setTicketRound]=useState<number|null>(null),[numberDraft,setNumberDraft]=useState(''),[numberQuery,setNumberQuery]=useState('');
+  const [ticketRound,setTicketRound]=useState<number|'all'|null>(null),[numberDraft,setNumberDraft]=useState(''),[numberQuery,setNumberQuery]=useState('');
   const [list,setList]=useState<AdminTicket[]>([]),[listBusy,setListBusy]=useState(false),[cancelTarget,setCancelTarget]=useState<AdminTicket|null>(null);
   const [cancelPassword,setCancelPassword]=useState('');
   const toastTimer=useRef<ReturnType<typeof setTimeout>|null>(null),listSerial=useRef(0);
@@ -114,17 +114,17 @@ export default function Admin(){
   const loadTickets=useCallback(async()=>{
     if(ticketRound===null)return;
     const serial=++listSerial.current;setListBusy(true);
-    try{const tickets=await (await backend()).listTickets(ticketRound,numberQuery);if(serial===listSerial.current)setList(tickets);}
+    try{const tickets=await (await backend()).listTickets(ticketRound==='all'?null:ticketRound,numberQuery);if(serial===listSerial.current)setList(tickets);}
     catch(e){if(serial===listSerial.current){setList([]);notify(e instanceof Error?e.message:'一覧を読み込めません。',true);}}
     finally{if(serial===listSerial.current)setListBusy(false);}
   },[ticketRound,numberQuery,notify]);
-  const lastNumber=state?.rounds.find(r=>r.id===ticketRound)?.last_number;
-  const cancelledCount=state?.rounds.find(r=>r.id===ticketRound)?.cancelled_count;
-  const checkedCount=state?.rounds.find(r=>r.id===ticketRound)?.checked_in_count;
+  const watchedRounds=state?.rounds.filter(r=>ticketRound==='all'||r.id===ticketRound)??[];
+  const ticketChanges=watchedRounds.map(r=>`${r.last_number}/${r.cancelled_count}/${r.checked_in_count??0}`).join(',');
   const waitingCount=state?.rounds.find(r=>r.id===ticketRound)?.waiting_count;
-  useEffect(()=>{if(tab==='tickets')loadTickets();},[tab,loadTickets,lastNumber,cancelledCount,checkedCount]);
+  const lastNumber=state?.rounds.find(r=>r.id===ticketRound)?.last_number;
+  useEffect(()=>{if(tab==='tickets')loadTickets();},[tab,loadTickets,ticketChanges]);
   useEffect(()=>{
-    if(tab!=='tickets'||!WAITLIST||ticketRound===null)return;
+    if(tab!=='tickets'||!WAITLIST||typeof ticketRound!=='number')return;
     let live=true;
     backend().then(b=>b.listWaitlist(ticketRound)).then(x=>{if(live)setWaitList(x);}).catch(()=>{if(live)setWaitList([]);});
     return()=>{live=false;};
@@ -189,7 +189,7 @@ export default function Admin(){
   }
   async function staffCancel(t:AdminTicket){
     setBusy(true);
-    try{await (await backend()).adminCancel(t.id,t.checked_in_at?cancelPassword:undefined);notify(`No.${t.number} を取り消しました。`);setCancelTarget(null);setCancelPassword('');await refresh();await loadTickets();}
+    try{await (await backend()).adminCancel(t.id,t.checked_in_at?cancelPassword:undefined);notify(`${t.event_label?`${t.event_label} `:''}${t.round_label}の No.${t.number} を取り消しました。`);setCancelTarget(null);setCancelPassword('');await refresh();await loadTickets();}
     catch(e){if(e instanceof ApiError&&e.code==='password')setCancelPassword('');notify(e instanceof Error?e.message:'取り消せませんでした。',true);}
     finally{setBusy(false);}
   }
@@ -239,6 +239,7 @@ export default function Admin(){
   const events=state?.events??[];
   const shown=eventFilter===null?rounds:rounds.filter(r=>r.event_id===eventFilter);
   const selected=rounds.find(r=>r.id===ticketRound);
+  const allTickets=ticketRound==='all';
   const eventSelect=(value:number|null,onChange:(v:number|null)=>void,all='すべてのイベント')=><select className="filter-select" value={value??''} onChange={e=>onChange(e.target.value?Number(e.target.value):null)} aria-label="イベントを選ぶ">{all&&<option value="">{all}</option>}{events.map(ev=><option key={ev.id} value={ev.id}>{ev.label}</option>)}</select>;
   const roundOptions=events.map(ev=>{const list=rounds.filter(r=>r.event_id===ev.id);return list.length?<optgroup key={ev.id} label={ev.label}>{list.map(r=><option key={r.id} value={r.id}>{r.label}（開演 {r.starts_time}）</option>)}</optgroup>:null;});
   return <div className="app-shell">
@@ -310,13 +311,14 @@ export default function Admin(){
           </section>
         </>}
 
-        {tab==='tickets'&&<><section className="panel"><div className="panel-heading"><div><h2><ListOrdered size={18}/>整理券</h2>{selected&&<p className="muted tiny">有効 {fmt(selected.active_count)} 枚・子ども {fmt(selected.used_people)} 名・保護者 {fmt(selected.used_guardians??0)} 名{CHECKIN?`（うち受付済み ${fmt(selected.checked_in_count??0)} 枚）`:''}／取消 {fmt(selected.cancelled_count)} 枚／最後の番号 No.{selected.last_number}</p>}</div><button className="icon-button" onClick={()=>loadTickets()} aria-label="一覧を更新"><RefreshCw size={18} className={listBusy?'spin':''}/></button></div>
+        {tab==='tickets'&&<><section className="panel"><div className="panel-heading"><div><h2><ListOrdered size={18}/>整理券</h2>{selected&&<p className="muted tiny">有効 {fmt(selected.active_count)} 枚・子ども {fmt(selected.used_people)} 名・保護者 {fmt(selected.used_guardians??0)} 名{CHECKIN?`（うち受付済み ${fmt(selected.checked_in_count??0)} 枚）`:''}／取消 {fmt(selected.cancelled_count)} 枚／最後の番号 No.{selected.last_number}</p>}{allTickets&&state&&<p className="muted tiny">すべての回の合計：有効 {fmt(state.totals.tickets)} 枚・子ども {fmt(state.totals.people)} 名・保護者 {fmt(state.totals.guardians??0)} 名{CHECKIN?`（うち受付済み ${fmt(state.totals.checked_in??0)} 枚）`:''}／取消 {fmt(state.totals.cancelled)} 枚</p>}</div><button className="icon-button" onClick={()=>loadTickets()} aria-label="一覧を更新"><RefreshCw size={18} className={listBusy?'spin':''}/></button></div>
           <div className="history-tools">
-            <select className="filter-select" value={ticketRound??''} onChange={e=>{setTicketRound(Number(e.target.value));setNumberDraft('');setNumberQuery('');}} aria-label="回を選ぶ">{roundOptions}</select>
+            <select className="filter-select" value={ticketRound??''} onChange={e=>{setTicketRound(e.target.value==='all'?'all':Number(e.target.value));setNumberDraft('');setNumberQuery('');}} aria-label="回を選ぶ"><option value="all">すべてのイベント（すべての回）</option>{roundOptions}</select>
             <form className="search-field" onSubmit={e=>{e.preventDefault();setNumberQuery(numberDraft.trim());}}><Search size={18}/><input inputMode="numeric" placeholder="番号で照合（例: 23）" aria-label="番号で検索" value={numberDraft} onChange={e=>/^\d{0,6}$/.test(e.target.value)&&setNumberDraft(e.target.value)}/>{numberQuery&&<button type="button" onClick={()=>{setNumberDraft('');setNumberQuery('');}}>解除</button>}<button type="submit">照合</button></form>
           </div>
-          {rounds.length?<div className="table-scroll"><table><thead><tr><th>番号</th><th>子ども</th><th>保護者</th><th>状態</th><th>発行時刻</th><th>端末</th><th className="right">操作</th></tr></thead><tbody>{list.map(t=><tr key={t.id} className={t.status==='cancelled'?'voided':''}>
+          {rounds.length?<div className="table-scroll"><table><thead><tr><th>番号</th>{allTickets&&<th>イベントと回</th>}<th>子ども</th><th>保護者</th><th>状態</th><th>発行時刻</th><th>端末</th><th className="right">操作</th></tr></thead><tbody>{list.map(t=><tr key={t.id} className={t.status==='cancelled'?'voided':''}>
             <td><strong className="ticket-no">No.{t.number}</strong></td>
+            {allTickets&&<td><span className={`round-dot ${tone(t.round_id)}`}/>{t.event_label||'—'}<span className="table-note">{t.round_label}（開演 {t.starts_time}）</span></td>}
             <td className="mono">{t.party_size} 名{t.children&&childSummary(t.children)&&<span className="table-note">{childSummary(t.children)}</span>}</td>
             <td className="mono">{t.guardians?`${t.guardians} 名`:'—'}</td>
             <td>{t.status==='active'&&t.checked_in_at?<><span className="kind-pill checked">受付済み</span><span className="table-note">{time(t.checked_in_at)}</span></>:<><span className={`kind-pill ${t.status==='active'?'sale':'void'}`}>{t.status==='active'?(CHECKIN?'有効（未受付）':'有効'):t.cancelled_by==='staff'?'取消（スタッフ）':'取消（本人）'}</span>{t.cancelled_at&&<span className="table-note">{time(t.cancelled_at)}{t.checked_in_at?`（${time(t.checked_in_at)} に受付済みだった整理券）`:''}</span>}</>}</td>
@@ -325,9 +327,9 @@ export default function Admin(){
             <td className="right">{t.status==='active'&&<button className="button small void-button" disabled={busy} onClick={()=>{setCancelPassword('');setCancelTarget(t);}}>取り消す</button>}</td>
           </tr>)}</tbody></table>
           {listBusy&&!list.length&&<div className="table-loading"><RefreshCw size={16} className="spin"/>読み込み中</div>}
-          {!listBusy&&!list.length&&<div className="empty"><div className="empty-icon"><TicketIcon size={26}/></div><strong>{numberQuery?`No.${numberQuery} の整理券はありません`:'まだ整理券がありません'}</strong><p>{numberQuery?'番号と回を確かめてください。存在しない番号の場合は、偽造の可能性があります。':'来場者が整理券を取ると、ここに表示されます。'}</p></div>}
+          {!listBusy&&!list.length&&<div className="empty"><div className="empty-icon"><TicketIcon size={26}/></div><strong>{numberQuery?`No.${numberQuery} の整理券はありません`:'まだ整理券がありません'}</strong><p>{numberQuery?(allTickets?'どの回にもこの番号の整理券はありません。存在しない番号の場合は、偽造の可能性があります。':'番号と回を確かめてください。存在しない番号の場合は、偽造の可能性があります。'):'来場者が整理券を取ると、ここに表示されます。'}</p></div>}
           </div>:<div className="empty"><strong>まだ回がありません</strong><p>「回の管理」から回を登録してください。</p></div>}
-          <div className="table-bottom"><ShieldCheck size={14}/>端末欄は同じスマホかどうかを見分けるための記号です。<span>{list.length}件を表示</span></div>
+          <div className="table-bottom"><ShieldCheck size={14}/>{allTickets?'新しく発行した順に並んでいます。番号は回ごとに1番から付くので、照合するときは回も確かめてください。':'端末欄は同じスマホかどうかを見分けるための記号です。'}<span>{list.length}件を表示</span></div>
         </section>
         {WAITLIST&&selected&&<section className="panel"><div className="panel-heading"><div><h2><Hourglass size={18}/>キャンセル待ち</h2><p className="muted tiny">待っている {fmt(selected.waiting_count)} 組（子ども {fmt(selected.waiting_people)} 名）／繰り上げ {fmt(selected.promoted_count)} 件{selected.waitlist_enabled?'':'／この回は新しい登録を受け付けない設定です'}</p></div></div>
           {waitList.length?<div className="table-scroll"><table><thead><tr><th>順番</th><th>状態</th><th>子ども</th><th>保護者</th><th>登録時刻</th><th>端末</th></tr></thead><tbody>{waitList.map((w,i)=><tr key={w.id} className={w.status==='waiting'||w.status==='promoted'?'':'voided'}>
@@ -467,7 +469,7 @@ export default function Admin(){
     {cancelTarget&&<Dialog title="整理券を取り消す" busy={busy} onClose={()=>setCancelTarget(null)}>
       <span className="dialog-symbol red"><XCircle size={24}/></span>
       <h2>No.{cancelTarget.number} を取り消しますか？</h2>
-      <div className="confirm-values"><div><span>回</span><strong>{cancelTarget.round_label}</strong></div><div><span>人数</span><strong>{partyText(cancelTarget)}</strong></div><div><span>{cancelTarget.checked_in_at?'受付時刻':'発行時刻'}</span><strong>{time(cancelTarget.checked_in_at??cancelTarget.created_at)}</strong></div></div>
+      <div className="confirm-values"><div><span>回</span><strong>{cancelTarget.event_label?`${cancelTarget.event_label} `:''}{cancelTarget.round_label}</strong></div><div><span>人数</span><strong>{partyText(cancelTarget)}</strong></div><div><span>{cancelTarget.checked_in_at?'受付時刻':'発行時刻'}</span><strong>{time(cancelTarget.checked_in_at??cancelTarget.created_at)}</strong></div></div>
       <p className="dialog-description">取り消すと、来場者のスマホにも「スタッフにより取り消された整理券」と表示されます。元に戻せません。</p>
       {cancelTarget.checked_in_at&&<>
         <p className="field-hint negative">この整理券は、すでに入場受付が済んでいます。取り消すと受付済みの人数からも外れます。取り消すには、取消用のパスワード（7桁）を入力してください。</p>

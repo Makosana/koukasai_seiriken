@@ -309,12 +309,20 @@ export function adminOperation(storage,body,now){
 }
 
 export function listTickets(sqlite,query,now){
+  const number=query.number?Number(query.number):null;
+  if(number!==null&&(!Number.isSafeInteger(number)||number<1))throw new SeirikenError('番号は数字で入力してください。');
+  if(query.round==='all'){
+    const rounds=new Map(sqlite.prepare('SELECT r.*,e.label AS event_label,e.venue AS event_venue FROM rounds r LEFT JOIN events e ON e.id=r.event_id').all().map(r=>[r.id,r]));
+    const rows=number===null
+      ?sqlite.prepare('SELECT * FROM tickets ORDER BY created_at DESC,number DESC LIMIT 5000').all()
+      :sqlite.prepare('SELECT * FROM tickets WHERE number=? ORDER BY created_at DESC LIMIT 5000').all(number);
+    const date=eventDate(sqlite);
+    return {tickets:rows.map(t=>adminTicketView(t,rounds.get(t.round_id),date,now))};
+  }
   const roundId=Number(query.round);
   if(!Number.isSafeInteger(roundId)||roundId<1)throw new SeirikenError('回を選んでください。');
   const round=sqlite.prepare(ROUND_ONE).get(roundId);
   if(!round)throw new SeirikenError('この回は見つかりません。',404,'not_found');
-  const number=query.number?Number(query.number):null;
-  if(number!==null&&(!Number.isSafeInteger(number)||number<1))throw new SeirikenError('番号は数字で入力してください。');
   const rows=number===null
     ?sqlite.prepare('SELECT * FROM tickets WHERE round_id=? ORDER BY number DESC LIMIT 5000').all(roundId)
     :sqlite.prepare('SELECT * FROM tickets WHERE round_id=? AND number=?').all(roundId,number);

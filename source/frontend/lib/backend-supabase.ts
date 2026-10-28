@@ -68,7 +68,7 @@ export const supabaseBackend:Backend={
   async logout(){await db().auth.signOut();},
   async adminOperation(body){await rpc('admin_operation',{p:body});},
   async listTickets(roundId,number){
-    return (await rpc<{tickets:AdminTicket[]}>('admin_list_tickets',{p_round_id:roundId,p_number:number?Number(number):null})).tickets;
+    return (await rpc<{tickets:AdminTicket[]}>('admin_list_tickets',{p_round_id:roundId??null,p_number:number?Number(number):null})).tickets;
   },
   async adminCancel(id,password){await rpc('admin_cancel',password?{p_id:id,p_password:password}:{p_id:id});},
   async listWaitlist(roundId){return (await rpc<{entries:AdminWaitEntry[]}>('admin_list_waitlist',{p_round_id:roundId})).entries;},
