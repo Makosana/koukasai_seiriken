@@ -6,7 +6,7 @@ import {readFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {PGlite} from '@electric-sql/pglite';
 
-const migrations=['001_init.sql','002_children.sql','003_name.sql','004_checkin.sql','005_events_waitlist.sql','006_cancel_checked_in.sql','007_list_all_tickets.sql'].map(f=>readFileSync(new URL('../../supabase/migrations/'+f,import.meta.url),'utf8'));
+const migrations=['001_init.sql','002_children.sql','003_name.sql','004_checkin.sql','005_events_waitlist.sql','006_cancel_checked_in.sql','007_list_all_tickets.sql','008_wait_blocks_overlap.sql'].map(f=>readFileSync(new URL('../../supabase/migrations/'+f,import.meta.url),'utf8'));
 const STAFF='00000000-0000-4000-8000-000000000001';
 const jst=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'});
 const day=offset=>jst.format(new Date(Date.now()+offset*86400000));
@@ -410,6 +410,24 @@ test('キャンセル待ち: 時間が重なる整理券があると登録でき
   await fails(join(y,me),'overlap');
   const other=randomUUID();
   const wy2=(await join(y,other)).entry;
-  await issue(z,other);
-  assert.equal((await look(wy2)).status,'removed');
+  await fails(issue(z,other),'wait_overlap');
+  await assert.rejects(issue(z,other),/Y.*キャンセル待ちをしているため/);
+  assert.equal((await look(wy2)).status,'waiting');
+  await call(db,'anon','leave_waitlist',[wy2.id,wy2.token]);
+  assert.equal((await issue(z,other)).ticket.round_id,z);
+});
+
+test('キャンセル待ち中は、時間が重なる回の整理券を取れない（重ならない回は取れる）', async()=>{
+  const db=await setup();
+  const y=(await op(db,{...late,label:'Y',startsTime:'23:15',durationMinutes:30,capacity:1,maxParty:1})).id;
+  const z=(await op(db,{...late,label:'Z',startsTime:'23:30',durationMinutes:20,capacity:5,maxParty:1})).id;
+  const far=(await op(db,{...late,label:'F',startsTime:'22:00',durationMinutes:30,capacity:5,maxParty:1})).id;
+  const issue=(id,d)=>call(db,'anon','issue_ticket',[id,kids(1),0,d,randomUUID()]);
+  await issue(y,randomUUID());
+  const me=randomUUID();
+  const w=(await call(db,'anon','join_waitlist',[y,kids(1),0,me,randomUUID()])).entry;
+  await fails(issue(z,me),'wait_overlap');
+  assert.equal((await issue(far,me)).ticket.round_id,far);
+  const look=(await call(db,'anon','lookup_waitlist',[JSON.stringify([{id:w.id,token:w.token}])])).entries[0];
+  assert.equal(look.status,'waiting');
 });

@@ -144,6 +144,9 @@
 .round-head p small{font-size:11px;color:#9aa0aa;margin-left:4px}
 .round-conflict{display:flex;align-items:flex-start;gap:7px;font-size:12.5px;color:#9a5a1e;background:#fff5e8;border:1px solid #f3dcbd;border-radius:10px;padding:11px 13px;line-height:1.7}
 .round-conflict svg{flex:none;margin-top:3px}
+.round-conflict p{margin:0}
+.round-conflict-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.round-conflict-actions .button{background:#fff;border-color:#ecd59f;color:#80601f;white-space:normal;text-align:left;height:auto;min-height:32px;padding:6px 11px}
 .v-shell .button.wait-button{background:#fff7e5;border-color:#ecd59f;color:#80601f}
 .v-shell .button.wait-button:hover:not(:disabled){background:#fdf0d2}
 .round-card .round-note+.wait-button,.round-card .round-note+.round-conflict{margin-top:10px}

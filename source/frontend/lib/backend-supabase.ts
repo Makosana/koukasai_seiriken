@@ -17,7 +17,7 @@ const networkError=()=>new ApiError('通信を確認できませんでした。�
 type RpcError={message:string;code?:string;hint?:string|null};
 function toApiError(error:RpcError){
   const code=error.hint||'';
-  if(code&&code in STATUS||['before','paused','closed','full','remaining','already','started','request_conflict','checked_in','wrong_round','cancelled','finished','invalid_code','overlap','open','already_waiting','waitlist_off','password'].includes(code))
+  if(code&&code in STATUS||['before','paused','closed','full','remaining','already','started','request_conflict','checked_in','wrong_round','cancelled','finished','invalid_code','overlap','wait_overlap','open','already_waiting','waitlist_off','password'].includes(code))
     return new ApiError(error.message,STATUS[code]??409,code);
   if(error.code==='42501'||error.code==='PGRST301'||error.code==='PGRST303')return new ApiError('運営画面を使うにはログインしてください。',401,'login');
   if(!error.code)return networkError();

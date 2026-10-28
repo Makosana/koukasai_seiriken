@@ -54,7 +54,7 @@ function roundNote(r:PublicRound,now:number){
   return '';
 }
 const WAIT_ENDED:Partial<Record<WaitEntry['status'],string>>={
-  removed:'時間が重なる回の整理券をお持ちになったため、このキャンセル待ちは自動で外れました。',
+  removed:'時間が重なる別の回の整理券が発行されたため、このキャンセル待ちは自動で外れました。',
   expired:'開演時刻までに空きが出なかったため、キャンセル待ちは終了しました。ご希望に添えず申し訳ありません。'
 };
 
@@ -180,6 +180,8 @@ export default function Visitor({page,eventId}:{page:'home'|'ticket';eventId:num
   const eventById=(id:number|undefined)=>state?.events.find(e=>e.id===id);
   // 時間が重なる回の整理券をすでに持っていれば、その整理券
   const conflictOf=(r:PublicRound)=>activeTickets.find(t=>{if(t.round_id===r.id)return false;const x=roundById(t.round_id);return !!x&&overlaps(x,r);})??null;
+  // 時間が重なる別の回のキャンセル待ち。残っている間は整理券を取れない
+  const waitConflictsOf=(r:PublicRound)=>openWaits.filter(w=>{if(w.round_id===r.id)return false;const x=roundById(w.round_id);return !!x&&overlaps(x,r);});
 
   async function issue(f:Form){
     if(busyRef.current)return;
@@ -198,7 +200,7 @@ export default function Visitor({page,eventId}:{page:'home'|'ticket';eventId:num
     }catch(e){
       const err=e instanceof ApiError?e:new ApiError('処理を完了できませんでした。',0,'network');
       if(err.code==='network'||err.status>=500){notify('通信が途中で途切れました。下の「結果を確認する」を押してください。',true);setForm(null);}
-      else{savePending(null);setForm(null);notify(err.message,true);if(err.code==='already'||err.code==='overlap')refreshTickets();}
+      else{savePending(null);setForm(null);notify(err.message,true);if(err.code==='already'||err.code==='overlap')refreshTickets();if(err.code==='wait_overlap')refreshWaits();}
       refreshRounds();
     }finally{busyRef.current=false;setBusy(false);setIssuing(false);}
   }
@@ -281,6 +283,13 @@ export default function Visitor({page,eventId}:{page:'home'|'ticket';eventId:num
   const commonNotices=<section className="panel notices"><h2><Info size={17}/>ご注意</h2><ul>{content.notices.map(n=><li key={n}>{n}</li>)}{WAITLIST&&<li>{content.waitlistNotice}</li>}</ul></section>;
   const mineStrip=(activeTickets.length>0||openWaits.length>0)&&<a className="mine-strip" href="#/ticket"><TicketIcon size={20}/><span><strong>{[activeTickets.length?`整理券 ${activeTickets.length} 枚`:'',openWaits.length?`キャンセル待ち ${openWaits.length} 件`:''].filter(Boolean).join('・')}</strong><small>タップして表示します</small></span><ChevronRight size={18}/></a>;
 
+  const leaveDialog=leaveTarget&&<Dialog title="キャンセル待ちをやめる" busy={busy} onClose={()=>setLeaveTarget(null)}>
+    <span className="dialog-symbol red"><TriangleAlert size={24}/></span>
+    <h2>キャンセル待ちをやめますか？</h2>
+    <p className="dialog-description">{leaveTarget.event_label} {leaveTarget.round_label}（開演 {leaveTarget.starts_time}）のキャンセル待ちをやめます。もう一度登録すると、順番は最後になります。</p>
+    <div className="dialog-buttons"><button className="button" disabled={busy} onClick={()=>setLeaveTarget(null)}>続ける</button><button className="button destructive" disabled={busy} onClick={()=>leave(leaveTarget)}>{busy&&<RefreshCw size={16} className="spin"/>}やめる</button></div>
+  </Dialog>;
+
   if(page==='ticket'){
     const suggestionsFor=(w:WaitEntry)=>(state?.rounds??[])
       .filter(r=>r.status==='open'&&r.id!==w.round_id&&!mine(r.id)&&!conflictOf(r))
@@ -311,12 +320,7 @@ export default function Visitor({page,eventId}:{page:'home'|'ticket';eventId:num
         <p className="dialog-description">{cancelTarget.event_label?`${cancelTarget.event_label} `:''}{cancelTarget.round_label}（開演 {cancelTarget.starts_time}）の No.{cancelTarget.number}・{partyText(cancelTarget)} を取り消します。取り消した整理券は元に戻せません。</p>
         <div className="dialog-buttons"><button className="button" disabled={busy} onClick={()=>setCancelTarget(null)}>やめる</button><button className="button destructive" disabled={busy} onClick={()=>cancel(cancelTarget)}>{busy&&<RefreshCw size={16} className="spin"/>}取り消す</button></div>
       </Dialog>}
-      {leaveTarget&&<Dialog title="キャンセル待ちをやめる" busy={busy} onClose={()=>setLeaveTarget(null)}>
-        <span className="dialog-symbol red"><TriangleAlert size={24}/></span>
-        <h2>キャンセル待ちをやめますか？</h2>
-        <p className="dialog-description">{leaveTarget.event_label} {leaveTarget.round_label}（開演 {leaveTarget.starts_time}）のキャンセル待ちをやめます。もう一度登録すると、順番は最後になります。</p>
-        <div className="dialog-buttons"><button className="button" disabled={busy} onClick={()=>setLeaveTarget(null)}>続ける</button><button className="button destructive" disabled={busy} onClick={()=>leave(leaveTarget)}>{busy&&<RefreshCw size={16} className="spin"/>}やめる</button></div>
-      </Dialog>}
+      {leaveDialog}
       {linkTarget&&<LinkDialog t={linkTarget} notify={notify} onClose={()=>setLinkTarget(null)}/>}
       <Toast toast={toast} onClose={()=>setToast(null)}/>
     </div>;
@@ -338,8 +342,8 @@ export default function Visitor({page,eventId}:{page:'home'|'ticket';eventId:num
         {current.notice&&<section className="panel notices event-notice"><h2><Info size={17}/>このイベントのご案内</h2><p>{current.notice}</p></section>}
         <h2 className="v-section-title">回の一覧<span>{dateLabel(serverNow)}</span></h2>
         {!roundsOf(current.id).length&&<div className="v-empty"><Clock3 size={32} strokeWidth={1.4}/><strong>まだ回が登録されていません</strong><p>しばらくしてから、もう一度開いてください。</p></div>}
-        <div className="round-list">{roundsOf(current.id).map(r=><RoundCard key={r.id} r={r} now={serverNow} owned={mine(r.id)} wait={myWait(r.id)} conflict={conflictOf(r)} disabled={busy||storageError||!!pending}
-          onIssue={()=>setForm({round:r,children:emptyChildren(),guardians:1,mode:'issue'})} onWait={()=>setForm({round:r,children:emptyChildren(),guardians:1,mode:'wait'})} onShow={id=>setHighlight(id)}/>)}</div>
+        <div className="round-list">{roundsOf(current.id).map(r=><RoundCard key={r.id} r={r} now={serverNow} owned={mine(r.id)} wait={myWait(r.id)} conflict={conflictOf(r)} waitConflicts={waitConflictsOf(r)} disabled={busy||storageError||!!pending}
+          onIssue={()=>setForm({round:r,children:emptyChildren(),guardians:1,mode:'issue'})} onWait={()=>setForm({round:r,children:emptyChildren(),guardians:1,mode:'wait'})} onShow={id=>setHighlight(id)} onLeave={setLeaveTarget}/>)}</div>
         {commonNotices}
       </>:<>
         <section className="v-hero"><span className="eyebrow">NUMBERED TICKET</span><h1>{content.eventName}の整理券</h1><p>{content.lead}</p></section>
@@ -356,6 +360,7 @@ export default function Visitor({page,eventId}:{page:'home'|'ticket';eventId:num
       </>}
     </main>
     <footer className="v-footer">{content.footer}</footer>
+    {leaveDialog}
     {form&&(()=>{
       const round=state?.rounds.find(x=>x.id===form.round.id)??form.round;
       const waitMode=form.mode==='wait';
@@ -400,12 +405,17 @@ function EventCard({ev,rounds}:{ev:EventInfo;rounds:PublicRound[]}){
   </a>;
 }
 
-function RoundCard({r,now,owned,wait,conflict,disabled,onIssue,onWait,onShow}:{r:PublicRound;now:number;owned?:Ticket;wait?:WaitEntry;conflict:Ticket|null;disabled:boolean;onIssue:()=>void;onWait:()=>void;onShow:(id:string)=>void}){
+function RoundCard({r,now,owned,wait,conflict,waitConflicts,disabled,onIssue,onWait,onShow,onLeave}:{r:PublicRound;now:number;owned?:Ticket;wait?:WaitEntry;conflict:Ticket|null;waitConflicts:WaitEntry[];disabled:boolean;onIssue:()=>void;onWait:()=>void;onShow:(id:string)=>void;onLeave:(w:WaitEntry)=>void}){
   const conflictNote=conflict&&<p className="round-conflict"><TriangleAlert size={15}/>時間が重なる回（{conflict.event_label?`${conflict.event_label} `:''}{conflict.round_label}・開演 {conflict.starts_time}）の整理券をお持ちのため、申し込めません。</p>;
+  const waitBlocked=!conflict&&waitConflicts.length>0;
+  const waitNote=waitBlocked&&<div className="round-conflict"><TriangleAlert size={15}/><div>
+    <p>時間が重なる回（{waitConflicts.map(w=>`${w.event_label} ${w.round_label}・開演 ${w.starts_time}`).join('、')}）のキャンセル待ちをしているため、申し込めません。キャンセル待ちをやめると申し込めます。</p>
+    <div className="round-conflict-actions">{waitConflicts.map(w=><button key={w.id} className="button small" disabled={disabled} onClick={()=>onLeave(w)}>{w.event_label} {w.round_label}のキャンセル待ちをやめる</button>)}</div>
+  </div></div>;
   let action;
   if(owned)action=<a className="button full" href="#/ticket" onClick={()=>onShow(owned.id)}><TicketIcon size={17}/>整理券を見る（No.{owned.number}）</a>;
   else if(wait)action=<a className="button full wait-button" href="#/ticket"><Hourglass size={17}/>キャンセル待ち中（{wait.position??'-'}番目）</a>;
-  else if(r.status==='open')action=conflict?conflictNote:<button className="button primary full" disabled={disabled} onClick={onIssue}><TicketIcon size={17}/>整理券を取る</button>;
+  else if(r.status==='open')action=conflict?conflictNote:waitBlocked?waitNote:<button className="button primary full" disabled={disabled} onClick={onIssue}><TicketIcon size={17}/>整理券を取る</button>;
   else if(r.status==='full'&&r.waitlist_open&&WAITLIST)action=<>
     <p className="round-note">{r.waiting_count>0?`満員です。いま ${r.waiting_count} 組がキャンセル待ちをしています。`:'満員です。キャンセル待ちに登録できます。'}</p>
     {conflict?conflictNote:<button className="button full wait-button" disabled={disabled} onClick={onWait}><Hourglass size={17}/>キャンセル待ちに登録</button>}
@@ -415,7 +425,7 @@ function RoundCard({r,now,owned,wait,conflict,disabled,onIssue,onWait,onShow}:{r
     <div className="round-head"><span className={`round-tone ${tone(r.id)}`}/><div><h3>{r.label}</h3><p>開演 <strong>{r.starts_time}</strong><small>（終演予定 {r.ends_time}）</small></p></div><span className={`status-chip status-${r.status}`}><span/>{STATUS_LABELS[r.status]}</span></div>
     <dl className="round-meta"><div><dt>受付時間</dt><dd>{r.opens_time}〜{r.closes_time}</dd></div><div><dt>残り</dt><dd className={r.remaining>0&&r.remaining<=Math.max(5,r.capacity_people*0.1)?'low':''}>{r.status==='finished'?'—':`${r.remaining} 名`}<small> / {r.capacity_people} 名</small></dd></div></dl>
     {action}
-    {r.status==='open'&&!owned&&!conflict&&<p className="round-sub">1枚で子ども最大 {r.max_party} 名まで申し込めます。未就学児・小学生は、保護者の方も一緒に入場できます（定員には数えません）。</p>}
+    {r.status==='open'&&!owned&&!wait&&!conflict&&!waitBlocked&&<p className="round-sub">1枚で子ども最大 {r.max_party} 名まで申し込めます。未就学児・小学生は、保護者の方も一緒に入場できます（定員には数えません）。</p>}
   </article>;
 }
 
@@ -432,7 +442,7 @@ function WaitCard({w,suggestions,eventOf,onLeave,onDismiss}:{w:WaitEntry;suggest
         {suggestions.length>0&&<div className="wait-suggest">
           <p>いま空きのある回</p>
           <ul>{suggestions.map(r=><li key={r.id}><a href={`#/e/${r.event_id}`}><span>{eventOf(r.event_id)?.label} {r.label}</span><span>開演 {r.starts_time}・残り {r.remaining} 名</span><ChevronRight size={15}/></a></li>)}</ul>
-          <small>整理券を取ると、時間が重なるキャンセル待ちは自動で外れます。</small>
+          <small>このキャンセル待ちと時間が重なる回の整理券を取るときは、先にキャンセル待ちをやめてください。</small>
         </div>}
       </>}
     </div>
