@@ -84,6 +84,11 @@
 .party-control strong{font-family:Inter,"Helvetica Neue",Arial,sans-serif;font-size:21px;color:#303743;margin-right:2px}
 .party-form{width:100%;display:flex;flex-direction:column;gap:8px;margin:4px 0 14px}
 .party-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.kind-checks{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.kind-checks .acknowledgement{margin:0}
+.party-row.off{opacity:.55}
+.party-row.off .party-label{color:#8a919c}
+.party-off{font-size:12px;font-weight:700;color:#8a919c;background:#eef0f3;border-radius:8px;padding:6px 12px}
 .party-label{font-size:14px;font-weight:700;color:#3a414d;display:flex;flex-direction:column;text-align:left}
 .party-label small{font-size:10px;font-weight:500;color:#8a95a4}
 .party-guardian{border-top:1px dashed #e3e5eb;padding-top:10px;margin-top:4px}
@@ -139,6 +144,7 @@
 .event-main h3{font-size:18px;line-height:1.4}
 .event-main p{display:flex;align-items:center;gap:5px;font-size:12.5px;color:#7b828e;margin-top:3px}
 .event-main .event-sub{font-size:12px;color:#8c929b}
+.event-main .event-kinds{color:#9a5a1e;font-weight:600}
 .event-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
 .event-chips:empty{display:none}
 .round-head p small{font-size:11px;color:#9aa0aa;margin-left:4px}
@@ -189,7 +195,7 @@
 .checkin-pickers em{font-style:normal;font-size:10px;font-weight:700;color:#2f7a52;background:#e3f3e9;border-radius:10px;padding:1px 7px}
 .checkin-pickers .filter-select{max-width:none;width:100%}
 .chart-legend-row{padding:14px 22px 0}
-.bar-waiting{background:#d9b45e}
+.bar-waiting{background:repeating-linear-gradient(135deg,#c65b3e66 0 3px,#c65b3e1f 3px 7px);box-shadow:inset 0 0 0 1px #c65b3e55}
 .poster-venue{font-size:18px!important;color:#5e6672!important;font-weight:600!important}
 .login-shell{min-height:100dvh;display:grid;place-items:center;padding:20px;background:var(--bg)}
 .login-card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:32px 28px;width:100%;max-width:380px;display:flex;flex-direction:column;gap:14px;align-items:flex-start}
@@ -262,6 +268,13 @@ button.help-link{border:0;background:transparent;text-align:left;cursor:pointer;
 .chart-bars{display:flex;align-items:flex-end;justify-content:center;gap:5px;height:220px;border-bottom:2px solid #e3e6ec}
 .chart-bar{position:relative;width:26px;min-height:2px;border-radius:5px 5px 0 0;transition:height .4s ease}
 .chart-bar>span{position:absolute;left:50%;bottom:100%;transform:translateX(-50%);margin-bottom:3px;font-family:Inter,"Helvetica Neue",Arial,sans-serif;font-size:11px;font-weight:600;color:#4b5462;white-space:nowrap}
+.chart-stack{position:relative;width:34px;min-height:2px;padding:0;border:0;background:none;cursor:pointer;transition:height .4s ease;font:inherit}
+.chart-fill{position:absolute;inset:0;border-radius:5px 5px 0 0;overflow:hidden}
+.chart-fill i{position:absolute;left:0;right:0;transition:height .4s ease,bottom .4s ease}
+.chart-value{position:absolute;left:50%;bottom:100%;transform:translateX(-50%);margin-bottom:3px;font-family:Inter,"Helvetica Neue",Arial,sans-serif;font-size:11px;font-weight:600;color:#4b5462;white-space:nowrap}
+.chart-tip{position:absolute;left:calc(100% + 8px);bottom:4px;z-index:5;width:max-content;max-width:220px;background:#2f3540;color:#fff;border-radius:8px;padding:8px 10px;font-size:11.5px;line-height:1.6;text-align:left;box-shadow:0 6px 16px #0003;pointer-events:none}
+.chart-tip strong{display:block;font-size:12px}
+.chart-group:has(.chart-tip){position:relative;z-index:2}
 .chart-label{display:flex;flex-direction:column;align-items:center;padding:8px 6px 0;font-size:12px;color:#3f4754;text-align:center}
 .chart-label small{font-family:Inter,"Helvetica Neue",Arial,sans-serif;font-size:11px;color:#8a919c}
 .chart-label .round-dot{margin:0 0 4px}

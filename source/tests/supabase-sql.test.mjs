@@ -6,7 +6,7 @@ import {readFileSync} from 'node:fs';
 import {randomUUID} from 'node:crypto';
 import {PGlite} from '@electric-sql/pglite';
 
-const migrations=['001_init.sql','002_children.sql','003_name.sql','004_checkin.sql','005_events_waitlist.sql','006_cancel_checked_in.sql','007_list_all_tickets.sql','008_wait_blocks_overlap.sql'].map(f=>readFileSync(new URL('../../supabase/migrations/'+f,import.meta.url),'utf8'));
+const migrations=['001_init.sql','002_children.sql','003_name.sql','004_checkin.sql','005_events_waitlist.sql','006_cancel_checked_in.sql','007_list_all_tickets.sql','008_wait_blocks_overlap.sql','009_wait_partial.sql','010_event_kinds.sql'].map(f=>readFileSync(new URL('../../supabase/migrations/'+f,import.meta.url),'utf8'));
 const STAFF='00000000-0000-4000-8000-000000000001';
 const jst=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'});
 const day=offset=>jst.format(new Date(Date.now()+offset*86400000));
@@ -290,6 +290,31 @@ test('イベント: 作成・変更・削除と、回はイベントに属する
   assert.equal(t.event_label,'ステージ');assert.equal(t.venue,'体育館');
 });
 
+test('イベントの対象: 対象外の区分の子どもでは整理券もキャンセル待ちも取れない', async()=>{
+  const db=await setup();
+  const all=['preschool','elementary','junior_high','high_school'];
+  assert.deepEqual((await call(db,'anon','public_state')).events[0].kinds,all);
+  await fails(op(db,{action:'event_create',label:'空',kinds:[]}),'invalid');
+  await fails(op(db,{action:'event_create',label:'空',kinds:['adult']}),'invalid');
+  const ev=await op(db,{action:'event_create',label:'ボルダリング',kinds:['junior_high','high_school']});
+  const kindsOf=async()=>(await call(db,'anon','public_state')).events.find(e=>e.id===ev.id).kinds;
+  assert.deepEqual(await kindsOf(),['junior_high','high_school']);
+  const id=(await op(db,{...late,eventId:ev.id,startsTime:'23:00',capacity:2,maxParty:2})).id;
+  const mixed=JSON.stringify({elementary:1,high_school:1});
+  await fails(call(db,'anon','issue_ticket',[id,mixed,1,randomUUID(),randomUUID()]),'kinds');
+  await assert.rejects(call(db,'anon','issue_ticket',[id,mixed,1,randomUUID(),randomUUID()]),/小学生/);
+  const device=randomUUID(),request=randomUUID();
+  await call(db,'anon','issue_ticket',[id,kids(2),0,device,request]);
+  assert.equal((await call(db,'anon','issue_ticket',[id,kids(2),0,device,request])).replayed,true);
+  await fails(call(db,'anon','join_waitlist',[id,mixed,1,randomUUID(),randomUUID()]),'kinds');
+  await call(db,'anon','join_waitlist',[id,kids(1),0,randomUUID(),randomUUID()]);
+  await op(db,{action:'event_update',id:ev.id,label:'ボルダリング',venue:'',notice:''});
+  assert.deepEqual(await kindsOf(),['junior_high','high_school']);
+  await op(db,{action:'event_update',id:ev.id,label:'ボルダリング',venue:'',notice:'',kinds:['elementary']});
+  assert.deepEqual(await kindsOf(),['elementary']);
+  await assert.rejects(call(db,'anon','admin_operation_base',[JSON.stringify({action:'event_delete',id:ev.id})]),/does not exist|permission denied/);
+});
+
 test('時間の重なり: 開演〜終演が重なる回の整理券は同じ端末で持てない', async()=>{
   const db=await setup();
   const a=(await op(db,{...late,label:'A',startsTime:'23:00',durationMinutes:20})).id;
@@ -306,7 +331,7 @@ test('時間の重なり: 開演〜終演が重なる回の整理券は同じ端
   await issue(b);
 });
 
-test('キャンセル待ち: 満員のときだけ登録でき、空きが出ると登録順に繰り上がる', async()=>{
+test('キャンセル待ち: 満員なら登録でき、空きが出ると入れる人から登録順に繰り上がる', async()=>{
   const db=await setup();
   const id=(await op(db,{...late,startsTime:'23:00',capacity:4,maxParty:4})).id;
   const [d1,d2,d3,d4,d5]=Array.from({length:5},()=>randomUUID());
@@ -335,20 +360,23 @@ test('キャンセル待ち: 満員のときだけ登録でき、空きが出る
   const got2=await look(w2);
   assert.equal(got2.status,'promoted');assert.equal(got2.ticket.number,2);assert.ok(got2.ticket.token);assert.ok(got2.ticket.checkin_code);
   assert.equal((await look(w3)).position,1);
-  assert.equal((await look(w4)).status,'waiting');
+  const got4=await look(w4);
+  assert.equal(got4.status,'promoted');assert.equal(got4.ticket.number,3);
+  p=await pub();
+  assert.equal(p.status,'open');assert.equal(p.remaining,1);assert.equal(p.waiting_count,1);assert.equal(p.waitlist_open,true);
+  assert.equal((await issue(d5)).ticket.number,4);
   p=await pub();
   assert.equal(p.status,'full');assert.equal(p.remaining,0);
-  await fails(issue(d5),'full');
+  await fails(issue(randomUUID()),'full');
   const admin=(await call(db,'staff','admin_state')).rounds.find(r=>r.id===id);
-  assert.equal(admin.remaining,2);assert.equal(admin.waiting_count,2);assert.equal(admin.waiting_people,4);assert.equal(admin.promoted_count,1);
+  assert.equal(admin.remaining,0);assert.equal(admin.waiting_count,1);assert.equal(admin.waiting_people,3);assert.equal(admin.promoted_count,2);
 
   await fails(call(db,'anon','leave_waitlist',[w3.id,'wrong']),'forbidden');
   const left=await call(db,'anon','leave_waitlist',[w3.id,w3.token]);
   assert.equal(left.entry.status,'cancelled');
   assert.equal((await call(db,'anon','leave_waitlist',[w3.id,w3.token])).replayed,true);
-  assert.equal((await look(w4)).status,'promoted');
   p=await pub();
-  assert.equal(p.status,'open');assert.equal(p.remaining,1);assert.equal(p.waitlist_open,false);
+  assert.equal(p.status,'full');assert.equal(p.waiting_count,0);
 
   const list=(await call(db,'staff','admin_list_waitlist',[id])).entries;
   assert.deepEqual(list.map(x=>x.status),['promoted','cancelled','promoted']);
@@ -363,7 +391,7 @@ test('キャンセル待ち: 満員のときだけ登録でき、空きが出る
   assert.equal(log.rows[0].n,2);
 });
 
-test('キャンセル待ち: 先頭が入れなければ後ろも待つ・定員を増やすと繰り上がる・受付停止', async()=>{
+test('キャンセル待ち: 先頭が入れなければ後ろの入れる人が先に繰り上がる・定員を増やすと繰り上がる・受付停止', async()=>{
   const db=await setup();
   const id=(await op(db,{...late,startsTime:'23:00',capacity:4,maxParty:4})).id;
   const issue=(d,n)=>call(db,'anon','issue_ticket',[id,kids(n),0,d,randomUUID()]);
@@ -375,10 +403,10 @@ test('キャンセル待ち: 先頭が入れなければ後ろも待つ・定員
   await call(db,'anon','cancel_ticket',[a.id,a.token]);
   const look=async(w)=>(await call(db,'anon','lookup_waitlist',[JSON.stringify([{id:w.id,token:w.token}])])).entries[0];
   assert.equal((await look(head)).status,'waiting');
-  assert.equal((await look(small)).status,'waiting');
+  assert.equal((await look(small)).status,'promoted');
+  assert.equal((await look(head)).position,1);
   await op(db,{...late,action:'update',id,startsTime:'23:00',capacity:7,maxParty:4});
   assert.equal((await look(head)).status,'promoted');
-  assert.equal((await look(small)).status,'promoted');
   await op(db,{action:'waitlist_off',id});
   const pub=(await call(db,'anon','public_state')).rounds[0];
   assert.equal(pub.waitlist_open,false);
@@ -389,6 +417,33 @@ test('キャンセル待ち: 先頭が入れなければ後ろも待つ・定員
   const after=(await call(db,'staff','admin_list_waitlist',[id])).entries;
   assert.equal(after.at(-1).status,'expired');
   assert.equal((await call(db,'staff','admin_state')).rounds[0].waiting_count,0);
+});
+
+test('キャンセル待ち: 残りより多い人数なら、空きがあっても登録できる。空きに入る人は整理券を取れる', async()=>{
+  const db=await setup();
+  const id=(await op(db,{...late,startsTime:'23:00',capacity:4,maxParty:4})).id;
+  const issue=(d,n)=>call(db,'anon','issue_ticket',[id,kids(n),0,d,randomUUID()]);
+  const join=(d,n)=>call(db,'anon','join_waitlist',[id,kids(n),0,d,randomUUID()]);
+  const pub=async()=>(await call(db,'anon','public_state')).rounds.find(r=>r.id===id);
+  await issue(randomUUID(),2);
+  assert.equal((await pub()).waitlist_open,true);
+  await fails(join(randomUUID(),2),'open');
+  await fails(issue(randomUUID(),3),'remaining');
+  const big=(await join(randomUUID(),3)).entry;
+  assert.equal(big.status,'waiting');assert.equal(big.position,1);
+  let p=await pub();
+  assert.equal(p.status,'open');assert.equal(p.remaining,2);assert.equal(p.waiting_count,1);
+  const t=(await issue(randomUUID(),2)).ticket;
+  p=await pub();
+  assert.equal(p.status,'full');assert.equal(p.remaining,0);
+  await call(db,'anon','cancel_ticket',[t.id,t.token]);
+  const look=(await call(db,'anon','lookup_waitlist',[JSON.stringify([{id:big.id,token:big.token}])])).entries[0];
+  assert.equal(look.status,'waiting');
+  await op(db,{...late,action:'update',id,startsTime:'23:00',capacity:5,maxParty:4});
+  const after=(await call(db,'anon','lookup_waitlist',[JSON.stringify([{id:big.id,token:big.token}])])).entries[0];
+  assert.equal(after.status,'promoted');
+  await op(db,{...late,action:'update',id,startsTime:'23:00',capacity:9,maxParty:4});
+  assert.equal((await pub()).waitlist_open,false);
 });
 
 test('キャンセル待ち: 時間が重なる整理券があると登録できず、繰り上がると重なる待ちは外れる', async()=>{

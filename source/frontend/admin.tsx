@@ -2,8 +2,8 @@ import {useCallback,useEffect,useRef,useState,type CSSProperties,type FormEvent,
 import {Ticket as TicketIcon,CalendarClock,ListOrdered,ChartNoAxesCombined,ChartColumn,QrCode,ScanQrCode,Plus,Pencil,Trash2,Pause,Play,RefreshCw,Search,TriangleAlert,ChevronRight,Download,Printer,KeyRound,PanelLeftClose,PanelLeftOpen,ShieldCheck,Wifi,DatabaseBackup,LockKeyhole,Users,XCircle,ExternalLink,LogOut,Cloud,CircleCheck,MapPin,Hourglass,Layers,CopyPlus} from 'lucide-react';
 import {ApiError,fmt} from './lib/api';
 import {backend,MODE} from './lib/backend';
-import type {AdminRound,AdminState,AdminTicket,AdminWaitEntry,EventInfo} from './lib/types';
-import {STATUS_LABELS,WAIT_LABELS,childSummary} from './lib/types';
+import type {AdminRound,AdminState,AdminTicket,AdminWaitEntry,ChildKind,EventInfo} from './lib/types';
+import {STATUS_LABELS,WAIT_LABELS,CHILD_KINDS,childSummary,eventKinds,kindsText} from './lib/types';
 import {content} from './content';
 import {Dialog,Toast,useQr} from './ui';
 import {tone,partyText} from './visitor';
@@ -11,7 +11,7 @@ import CheckinTab from './checkin';
 
 type Tab='rounds'|'checkin'|'tickets'|'summary'|'poster';
 type RoundForm={id?:number;eventId:string;label:string;startsTime:string;opensTime:string;closesTime:string;capacity:string;maxParty:string;finishAfterMinutes:string;durationMinutes:string};
-type EventForm={id?:number;label:string;venue:string;notice:string};
+type EventForm={id?:number;label:string;venue:string;notice:string;kinds:ChildKind[]};
 const CHECKIN=MODE==='supabase',WAITLIST=MODE==='supabase';
 const tabs=[{id:'rounds' as Tab,label:'イベントと回',icon:CalendarClock},...(CHECKIN?[{id:'checkin' as Tab,label:'入場受付',icon:ScanQrCode}]:[]),{id:'tickets' as Tab,label:'整理券の一覧',icon:ListOrdered},{id:'summary' as Tab,label:'集計・出力',icon:ChartNoAxesCombined},{id:'poster' as Tab,label:'掲示用QR',icon:QrCode}];
 const titles:Record<Tab,{title:string;subtitle:string;kicker:string}>={
@@ -183,8 +183,9 @@ export default function Admin(){
     if(!eventForm)return;
     const label=eventForm.label.trim();
     if(!label){setFormError('イベントの名前を入力してください。');return;}
+    if(!eventForm.kinds.length){setFormError('対象の区分を1つ以上選んでください。');return;}
     setFormError('');
-    const ok=await operate({action:eventForm.id?'event_update':'event_create',id:eventForm.id,label,venue:eventForm.venue.trim(),notice:eventForm.notice.trim()},eventForm.id?'イベントを更新しました。':'イベントを追加しました。');
+    const ok=await operate({action:eventForm.id?'event_update':'event_create',id:eventForm.id,label,venue:eventForm.venue.trim(),notice:eventForm.notice.trim(),kinds:eventForm.kinds},eventForm.id?'イベントを更新しました。':'イベントを追加しました。');
     if(ok)setEventForm(null);
   }
   async function staffCancel(t:AdminTicket){
@@ -277,15 +278,16 @@ export default function Admin(){
           <section className="panel date-panel"><div className="panel-heading"><h2><span className="heading-mark"/>開催日</h2><span className="muted tiny">回の時刻はこの日付で判定します</span></div>
             <div className="date-row"><input type="date" className="text-input" value={dateDraft} onChange={e=>setDateDraft(e.target.value)} aria-label="開催日"/><button className="button" disabled={busy||!dateDraft||dateDraft===state?.eventDate} onClick={()=>operate({action:'settings',eventDate:dateDraft},'開催日を保存しました。')}>保存</button>{state&&state.eventDate!==state.today&&<button className="button small" disabled={busy} onClick={()=>{setDateDraft(state.today);operate({action:'settings',eventDate:state.today},'開催日を今日にしました。');}}>今日にする</button>}</div>
           </section>
-          <section className="panel"><div className="panel-heading"><h2><Layers size={18}/>イベント</h2><button className="button primary small" disabled={busy||connection!=='ok'} onClick={()=>{setFormError('');setEventForm({label:'',venue:'',notice:''});}}><Plus size={16}/>イベントを追加</button></div>
-            {events.length?<div className="table-scroll"><table><thead><tr><th>イベント</th><th>会場</th><th>ご案内（来場者に表示）</th><th className="right">回</th><th className="right">操作</th></tr></thead><tbody>{events.map(ev=>{const count=rounds.filter(r=>r.event_id===ev.id).length;return <tr key={ev.id}>
+          <section className="panel"><div className="panel-heading"><h2><Layers size={18}/>イベント</h2><button className="button primary small" disabled={busy||connection!=='ok'} onClick={()=>{setFormError('');setEventForm({label:'',venue:'',notice:'',kinds:CHILD_KINDS.map(k=>k.key)});}}><Plus size={16}/>イベントを追加</button></div>
+            {events.length?<div className="table-scroll"><table><thead><tr><th>イベント</th><th>会場</th><th>対象</th><th>ご案内（来場者に表示）</th><th className="right">回</th><th className="right">操作</th></tr></thead><tbody>{events.map(ev=>{const count=rounds.filter(r=>r.event_id===ev.id).length;return <tr key={ev.id}>
               <td><span className={`round-dot ${tone(ev.id)}`}/><strong>{ev.label}</strong></td>
               <td>{ev.venue||<span className="muted">—</span>}</td>
+              <td>{kindsText(ev)||<span className="muted">すべて</span>}</td>
               <td><span className="event-notice-cell">{ev.notice||<span className="muted">—</span>}</span></td>
               <td className="right mono">{count} 回</td>
               <td className="right"><div className="row-actions">
                 <button className="button small" onClick={()=>setEventFilter(ev.id)}>回を見る</button>
-                <button className="icon-button" disabled={busy} aria-label={`${ev.label}を編集`} onClick={()=>{setFormError('');setEventForm({id:ev.id,label:ev.label,venue:ev.venue,notice:ev.notice});}}><Pencil size={16}/></button>
+                <button className="icon-button" disabled={busy} aria-label={`${ev.label}を編集`} onClick={()=>{setFormError('');setEventForm({id:ev.id,label:ev.label,venue:ev.venue,notice:ev.notice,kinds:eventKinds(ev)});}}><Pencil size={16}/></button>
                 <button className="icon-button" disabled={busy||count>0} title={count>0?'回が登録されているイベントは削除できません':''} aria-label={`${ev.label}を削除`} onClick={()=>setEventDelete(ev)}><Trash2 size={16}/></button>
               </div></td>
             </tr>;})}</tbody></table></div>:<div className="empty"><div className="empty-icon"><Layers size={26}/></div><strong>まずイベントを登録してください</strong><p>「イベントを追加」から、イベントの名前と会場を登録します。回はイベントごとに登録します。</p></div>}
@@ -307,7 +309,7 @@ export default function Admin(){
                 <button className="icon-button" disabled={busy||r.active_count+r.cancelled_count>0} title={r.active_count+r.cancelled_count>0?'整理券を発行した回は削除できません':''} aria-label={`${r.label}を削除`} onClick={()=>setDeleteTarget(r)}><Trash2 size={16}/></button>
               </div></td>
             </tr>)}</tbody></table></div>:<div className="empty"><div className="empty-icon"><CalendarClock size={26}/></div><strong>まだ回がありません</strong><p>{events.length?'「回を追加」から、公演の回を登録してください。':'先にイベントを登録してください。'}</p></div>}
-            <div className="table-bottom"><ShieldCheck size={14}/>{WAITLIST?'状態は現在時刻・残り人数・一時停止から自動で決まります。キャンセル待ちの人がいる間は、空いた席を待っている人に先に回すため「満員」のままです。':'状態は現在時刻・残り人数・一時停止から自動で決まります。'}<span>5秒ごとに更新</span></div>
+            <div className="table-bottom"><ShieldCheck size={14}/>{WAITLIST?'状態は現在時刻・残り人数・一時停止から自動で決まります。空きが出ると、キャンセル待ちの人に登録順で（空きに入れる人数の人から）先に回します。空きに入れる人がいなければ、その空きは誰でも取れます。':'状態は現在時刻・残り人数・一時停止から自動で決まります。'}<span>5秒ごとに更新</span></div>
           </section>
         </>}
 
@@ -339,7 +341,7 @@ export default function Admin(){
             <td className="mono">{w.guardians?`${w.guardians} 名`:'—'}</td>
             <td className="mono">{time(w.created_at)}</td>
             <td className="mono muted">{w.device}</td>
-          </tr>)}</tbody></table></div>:<div className="empty"><strong>この回のキャンセル待ちはありません</strong><p>満員の回で来場者が登録すると、ここに順番どおり表示されます。</p></div>}
+          </tr>)}</tbody></table></div>:<div className="empty"><strong>この回のキャンセル待ちはありません</strong><p>満員の回や、残りより多い人数で来場者が登録すると、ここに順番どおり表示されます。</p></div>}
           <div className="table-bottom"><ShieldCheck size={14}/>空きが出ると、上から順に自動で整理券を発行します。先頭の人数分の空きがないときは、後ろの人も待ちます。<span>{waitList.length}件</span></div>
         </section>}
         </>}
@@ -446,6 +448,10 @@ export default function Admin(){
       <input id="e-label" className="text-input" maxLength={40} value={eventForm.label} placeholder="例: 吹奏楽部ミニコンサート" onChange={e=>setEventForm({...eventForm,label:e.target.value})}/>
       <label className="form-label" htmlFor="e-venue">会場</label>
       <input id="e-venue" className="text-input" maxLength={60} value={eventForm.venue} placeholder="例: 体育館" onChange={e=>setEventForm({...eventForm,venue:e.target.value})}/>
+      <span className="form-label">対象<span className="muted tiny">チェックを外した区分は、来場者が選べなくなります</span></span>
+      <div className="kind-checks" role="group" aria-label="対象">{CHILD_KINDS.map(k=><label key={k.key} className="acknowledgement"><input type="checkbox" checked={eventForm.kinds.includes(k.key)} onChange={e=>setEventForm({...eventForm,kinds:CHILD_KINDS.map(c=>c.key).filter(c=>c===k.key?e.target.checked:eventForm.kinds.includes(c))})}/><span>{k.label}</span></label>)}</div>
+      {!eventForm.kinds.includes('preschool')&&!eventForm.kinds.includes('elementary')&&<p className="field-hint">未就学児と小学生が対象外なので、保護者の人数は聞きません。</p>}
+      {eventForm.id&&<p className="field-hint">対象を変えても、すでに発行した整理券とキャンセル待ちはそのまま残ります。</p>}
       <label className="form-label" htmlFor="e-notice">ご案内<span className="muted tiny">集合場所や持ち物など（1000文字まで）</span></label>
       <textarea id="e-notice" className="text-input textarea" maxLength={1000} rows={4} value={eventForm.notice} placeholder="例: 集合場所は体育館入口前です。開演の10分前までにお集まりください。" onChange={e=>setEventForm({...eventForm,notice:e.target.value})}/>
       {formError&&<p className="field-hint negative" role="alert">{formError}</p>}
@@ -491,23 +497,41 @@ function RoundChart({events,rounds:all,selector}:{events:EventInfo[];rounds:Admi
   const withRounds=events.filter(ev=>all.some(r=>r.event_id===ev.id));
   const current=withRounds.find(ev=>ev.id===eventId)??withRounds[0];
   const rounds=current?all.filter(r=>r.event_id===current.id):all;
-  const series=[
-    {label:'定員',cls:'bar-capacity',value:(r:AdminRound)=>r.capacity_people},
-    {label:'整理券を取った人数',cls:'bar-issued',value:(r:AdminRound)=>r.used_people},
-    ...(CHECKIN?[{label:'受付が済んだ人数',cls:'bar-checked',value:(r:AdminRound)=>r.checked_in_people??0}]:[]),
-    ...(WAITLIST?[{label:'キャンセル待ちの人数',cls:'bar-waiting',value:(r:AdminRound)=>r.waiting_people??0}]:[])
+  const [tip,setTip]=useState<number|null>(null);
+  const legend=[
+    {label:'定員',cls:'bar-capacity'},
+    {label:'整理券を取った人数',cls:'bar-issued'},
+    ...(CHECKIN?[{label:'受付が済んだ人数',cls:'bar-checked'}]:[]),
+    ...(WAITLIST?[{label:'キャンセル待ちの人数',cls:'bar-waiting'}]:[])
   ];
-  const max=Math.max(1,...rounds.flatMap(r=>series.map(s=>s.value(r))));
+  const parts=(r:AdminRound)=>({cap:r.capacity_people,used:r.used_people,checked:CHECKIN?Math.min(r.used_people,r.checked_in_people??0):0,waiting:WAITLIST?r.waiting_people??0:0});
+  const max=Math.max(1,...rounds.map(r=>{const p=parts(r);return Math.max(p.cap,p.used+p.waiting);}));
+  const pct=(v:number,of:number)=>`${of?v/of*100:0}%`;
   return <section className="panel chart-panel">
     <div className="panel-heading"><h2><ChartColumn size={18}/>回ごとのグラフ（子どもの人数）</h2>{withRounds.length>1&&selector(current?.id??null,setEventId,'')}</div>
-    <div className="chart-legend chart-legend-row">{series.map(s=><span key={s.cls}><i className={s.cls}/>{s.label}</span>)}{current?.venue&&<span className="muted"><MapPin size={12}/>{current.venue}</span>}</div>
-    <div className="chart-scroll"><div className="chart" style={{'--bars':series.length} as CSSProperties}>
-      {rounds.map(r=><div key={r.id} className="chart-group">
-        <div className="chart-bars">{series.map(s=>{const v=s.value(r);return <div key={s.cls} className={`chart-bar ${s.cls}`} style={{height:`${v/max*100}%`}} title={`${r.label}：${s.label} ${fmt(v)} 名`}><span>{fmt(v)}</span></div>;})}</div>
-        <div className="chart-label"><span className={`round-dot ${tone(r.id)}`}/><strong>{r.label}</strong><small>{r.starts_time}</small></div>
-      </div>)}
+    <div className="chart-legend chart-legend-row">{legend.map(s=><span key={s.cls}><i className={s.cls}/>{s.label}</span>)}{current?.venue&&<span className="muted"><MapPin size={12}/>{current.venue}</span>}</div>
+    <div className="chart-scroll"><div className="chart" style={{'--bars':1} as CSSProperties}>
+      {rounds.map(r=>{
+        const p=parts(r),outer=Math.max(p.cap,p.used+p.waiting);
+        const detail=`定員 ${fmt(p.cap)} 名・整理券 ${fmt(p.used)} 名${CHECKIN?`（うち受付済み ${fmt(p.checked)} 名）`:''}${WAITLIST?`・キャンセル待ち ${fmt(p.waiting)} 名`:''}`;
+        return <div key={r.id} className="chart-group">
+          <div className="chart-bars">
+            <button type="button" className="chart-stack" style={{height:pct(outer,max)}} aria-label={`${r.label}：${detail}`} onClick={()=>setTip(tip===r.id?null:r.id)} onMouseEnter={()=>setTip(r.id)} onMouseLeave={()=>setTip(t=>t===r.id?null:t)}>
+              <span className="chart-fill">
+                <i className="bar-capacity" style={{bottom:0,height:pct(p.cap,outer)}}/>
+                <i className="bar-issued" style={{bottom:0,height:pct(p.used,outer)}}/>
+                {p.checked>0&&<i className="bar-checked" style={{bottom:0,height:pct(p.checked,outer)}}/>}
+                {p.waiting>0&&<i className="bar-waiting" style={{bottom:pct(p.used,outer),height:pct(p.waiting,outer)}}/>}
+              </span>
+              <span className="chart-value">{fmt(p.used)} / {fmt(p.cap)}</span>
+              {tip===r.id&&<span className="chart-tip" role="tooltip"><strong>{r.label}（{r.starts_time}）</strong>{detail}</span>}
+            </button>
+          </div>
+          <div className="chart-label"><span className={`round-dot ${tone(r.id)}`}/><strong>{r.label}</strong><small>{r.starts_time}</small></div>
+        </div>;
+      })}
     </div></div>
-    <div className="table-bottom"><ShieldCheck size={14}/>保護者は定員に数えないため、グラフにも入れていません。<span>5秒ごとに更新</span></div>
+    <div className="table-bottom"><ShieldCheck size={14}/>{WAITLIST?'灰色の高さが定員です。キャンセル待ちは整理券の上に積み上げるので、定員を超えた分はあふれている人数です。棒に触れると内訳が出ます。':'灰色の高さが定員です。棒に触れると内訳が出ます。'}保護者は定員に数えないため、グラフにも入れていません。<span>5秒ごとに更新</span></div>
   </section>;
 }
 

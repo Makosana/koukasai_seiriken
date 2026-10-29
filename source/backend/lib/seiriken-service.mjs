@@ -24,6 +24,21 @@ function partyInput(body){
   return {children,total,guardians};
 }
 const childrenOf=t=>({preschool:t.preschool??0,elementary:t.elementary??0,junior_high:t.junior_high??0,high_school:t.high_school??0});
+const ALL_KINDS=CHILD_KINDS.map(([key])=>key);
+const kindsOf=text=>{const list=String(text??'').split(',');return ALL_KINDS.filter(k=>list.includes(k));};
+function checkKinds(row,children){
+  const allowed=kindsOf(row.event_kinds??ALL_KINDS.join(','));
+  const ng=CHILD_KINDS.filter(([key])=>children[key]>0&&!allowed.includes(key)).map(([,name])=>name);
+  if(ng.length)throw new SeirikenError(`このイベントは、${ng.join('・')}は対象外です。人数を選び直してください。`,400,'kinds');
+}
+function kindsInput(body){
+  if(body?.kinds===undefined)return null;
+  if(!Array.isArray(body.kinds))throw new SeirikenError('対象の区分を選んでください。');
+  if(body.kinds.some(k=>!ALL_KINDS.includes(k)))throw new SeirikenError('対象の区分を読み取れません。');
+  const kinds=ALL_KINDS.filter(k=>body.kinds.includes(k));
+  if(!kinds.length)throw new SeirikenError('対象の区分を1つ以上選んでください。');
+  return kinds;
+}
 
 export function jstDate(now){
   return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
@@ -59,9 +74,9 @@ const ROUND_STATS=`SELECT r.*,
   COALESCE(SUM(CASE WHEN t.status='cancelled' THEN t.party_size END),0) AS cancelled_people,
   COALESCE(MAX(t.number),0) AS last_number,
   COALESCE(SUM(CASE WHEN t.status='active' THEN t.guardians END),0) AS used_guardians,
-  e.label AS event_label,e.venue AS event_venue
+  e.label AS event_label,e.venue AS event_venue,e.kinds AS event_kinds
 FROM rounds r LEFT JOIN tickets t ON t.round_id=r.id LEFT JOIN events e ON e.id=r.event_id`;
-const ROUND_ONE='SELECT r.*,e.label AS event_label,e.venue AS event_venue FROM rounds r LEFT JOIN events e ON e.id=r.event_id WHERE r.id=?';
+const ROUND_ONE='SELECT r.*,e.label AS event_label,e.venue AS event_venue,e.kinds AS event_kinds FROM rounds r LEFT JOIN events e ON e.id=r.event_id WHERE r.id=?';
 
 function roundTimes(row,date){
   const starts=at(date,row.starts_time),opens=at(date,row.opens_time),closes=at(date,row.closes_time);
@@ -77,7 +92,7 @@ function overlappingRound(sqlite,deviceId,round){
   const held=sqlite.prepare("SELECT r.*,e.label AS event_label FROM tickets t JOIN rounds r ON r.id=t.round_id LEFT JOIN events e ON e.id=r.event_id WHERE t.device_id=? AND t.status='active' AND r.id<>? ORDER BY r.starts_time,r.id").all(deviceId,round.id);
   return held.find(x=>overlaps(x,round))??null;
 }
-function eventsList(sqlite){return sqlite.prepare('SELECT id,label,venue,notice FROM events ORDER BY id').all();}
+function eventsList(sqlite){return sqlite.prepare('SELECT id,label,venue,notice,kinds FROM events ORDER BY id').all().map(e=>({...e,kinds:kindsOf(e.kinds)}));}
 function statusOf(row,times,remaining,now){
   const t=now.getTime();
   if(t>=times.finishes.getTime())return 'finished';
@@ -138,6 +153,7 @@ export function issueTicket(storage,body,now){
     }
     const row=roundRow(sqlite,roundId);
     if(!row)throw new SeirikenError('この回は見つかりません。画面を再読み込みしてください。',404,'not_found');
+    checkKinds(row,party.children);
     const round=roundView(row,date,now);
     if(round.status==='before')throw new SeirikenError(`まだ受付前です。${row.opens_time} から受け付けます。`,409,'before');
     if(round.status==='paused')throw new SeirikenError('現在、この回の受付を一時停止しています。しばらくしてからお試しください。',409,'paused');
@@ -221,7 +237,7 @@ function eventInput(body){
   if(!label||label.length>LIMITS.label)throw new SeirikenError(`イベントの名前は1〜${LIMITS.label}文字で入力してください。`);
   if(venue.length>LIMITS.venue)throw new SeirikenError(`会場は${LIMITS.venue}文字以内で入力してください。`);
   if(notice.length>LIMITS.notice)throw new SeirikenError(`ご案内は${LIMITS.notice}文字以内で入力してください。`);
-  return {label,venue,notice};
+  return {label,venue,notice,kinds:kindsInput(body)};
 }
 
 function roundInput(sqlite,body){
@@ -256,7 +272,7 @@ export function adminOperation(storage,body,now){
     }
     if(action==='event_create'){
       const v=eventInput(body),stamp=now.toISOString();
-      const r=sqlite.prepare('INSERT INTO events(label,venue,notice,created_at,updated_at) VALUES(?,?,?,?,?)').run(v.label,v.venue,v.notice,stamp,stamp);
+      const r=sqlite.prepare('INSERT INTO events(label,venue,notice,kinds,created_at,updated_at) VALUES(?,?,?,?,?,?)').run(v.label,v.venue,v.notice,(v.kinds??ALL_KINDS).join(','),stamp,stamp);
       record(sqlite,now,action,{id:Number(r.lastInsertRowid),label:v.label});
       return {ok:true,id:Number(r.lastInsertRowid)};
     }
@@ -266,6 +282,7 @@ export function adminOperation(storage,body,now){
       if(action==='event_update'){
         const v=eventInput(body);
         sqlite.prepare('UPDATE events SET label=?,venue=?,notice=?,updated_at=? WHERE id=?').run(v.label,v.venue,v.notice,now.toISOString(),id);
+        if(v.kinds)sqlite.prepare('UPDATE events SET kinds=? WHERE id=?').run(v.kinds.join(','),id);
         record(sqlite,now,action,{id,label:v.label});
         return {ok:true};
       }

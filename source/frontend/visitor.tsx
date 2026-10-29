@@ -3,7 +3,7 @@ import {Ticket as TicketIcon,Clock3,Users,ChevronRight,RefreshCw,TriangleAlert,A
 import {ApiError,newId,scope,clockSeconds,dateLabel} from './lib/api';
 import {backend,MODE,type Saved,type SavedWait} from './lib/backend';
 import type {Children,EventInfo,PublicRound,PublicState,Ticket,WaitEntry} from './lib/types';
-import {STATUS_LABELS,CHILD_KINDS,MAX_GUARDIANS,emptyChildren,childTotal,needsGuardian,childSummary,checkinPayload,overlaps} from './lib/types';
+import {STATUS_LABELS,CHILD_KINDS,MAX_GUARDIANS,emptyChildren,childTotal,needsGuardian,childSummary,checkinPayload,overlaps,eventKinds,kindsText} from './lib/types';
 import {content} from './content';
 import {Dialog,Toast,useQr} from './ui';
 
@@ -48,7 +48,7 @@ function minutesUntil(iso:string,now:number){return Math.max(1,Math.ceil((Date.p
 function roundNote(r:PublicRound,now:number){
   if(r.status==='before'){const m=minutesUntil(r.opens_at,now);return `${r.opens_time} から受付を開始します（あと約${m>=60?`${Math.floor(m/60)}時間${m%60?`${m%60}分`:''}`:`${m}分`}）。`;}
   if(r.status==='paused')return '受付を一時停止しています。しばらくしてから画面を更新してください。';
-  if(r.status==='full')return r.waiting_count>0?'満員です。キャンセル待ちの方から順にご案内しています。':'満員になりました。取消が出ると、再び受け付けます。';
+  if(r.status==='full')return r.waiting_count>0?'満員です。空きが出ると、キャンセル待ちの方にご案内します。':'満員になりました。取消が出ると、再び受け付けます。';
   if(r.status==='closed')return '受付は終了しました。';
   if(r.status==='finished')return 'この回は終了しました。';
   return '';
@@ -363,24 +363,27 @@ export default function Visitor({page,eventId}:{page:'home'|'ticket';eventId:num
     {leaveDialog}
     {form&&(()=>{
       const round=state?.rounds.find(x=>x.id===form.round.id)??form.round;
-      const waitMode=form.mode==='wait';
-      const total=childTotal(form.children),max=waitMode?round.max_party:Math.max(0,Math.min(round.max_party,round.remaining)),guardian=needsGuardian(form.children);
+      const canWait=WAITLIST&&round.waitlist_open;
+      const total=childTotal(form.children),max=form.mode==='wait'||canWait?round.max_party:Math.max(0,Math.min(round.max_party,round.remaining)),guardian=needsGuardian(form.children);
+      const over=form.mode==='issue'&&canWait&&total>round.remaining;
+      const waitMode=form.mode==='wait'||over;
       const setKind=(key:keyof Children,value:number)=>setForm({...form,children:{...form.children,[key]:value}});
-      const ev=eventById(round.event_id);
-      return <Dialog title={waitMode?'キャンセル待ちに登録':'整理券を取る'} busy={busy} onClose={()=>setForm(null)}>
-        <span className="dialog-symbol">{waitMode?<Hourglass size={24}/>:<TicketIcon size={24}/>}</span>
+      const ev=eventById(round.event_id),allowedKinds=eventKinds(ev);
+      return <Dialog title={form.mode==='wait'?'キャンセル待ちに登録':'整理券を取る'} busy={busy} onClose={()=>setForm(null)}>
+        <span className="dialog-symbol">{form.mode==='wait'?<Hourglass size={24}/>:<TicketIcon size={24}/>}</span>
         <h2>{ev?`${ev.label} `:''}{round.label}（開演 {round.starts_time}）</h2>
-        {waitMode
-          ?<p className="dialog-description">いま {round.waiting_count} 組が待っています。空きが出ると、登録した順に自動で整理券をお取りします。<strong>必ず繰り上がるとは限りません。</strong>1枚で子ども {round.max_party} 名までです。</p>
-          :<p className="dialog-description">入場するお子さまの人数を、区分ごとに選んでください。1枚で子ども {round.max_party} 名まで、残りは {round.remaining} 名分です。</p>}
+        {form.mode==='wait'
+          ?<p className="dialog-description">いま {round.waiting_count} 組が待っています。空きが出ると、登録した順に、空きに入れる人数の方から自動で整理券をお取りします。<strong>必ず繰り上がるとは限りません。</strong>1枚で子ども {round.max_party} 名までです。</p>
+          :<p className="dialog-description">入場するお子さまの人数を、区分ごとに選んでください。1枚で子ども {round.max_party} 名まで、残りは {round.remaining} 名分です。{canWait?'残りより多い人数のときは、キャンセル待ちに登録できます。':''}</p>}
         <div className="party-form">
-          {CHILD_KINDS.map(k=><Stepper key={k.key} label={k.label} value={form.children[k.key]} min={0} canAdd={total<max} disabled={busy} onChange={v=>setKind(k.key,v)}/>)}
+          {CHILD_KINDS.map(k=><Stepper key={k.key} label={k.label} value={form.children[k.key]} min={0} canAdd={total<max} disabled={busy} off={!allowedKinds.includes(k.key)} onChange={v=>setKind(k.key,v)}/>)}
           {guardian&&<div className="party-guardian">
             <Stepper label="保護者" note="定員には数えません" value={form.guardians} min={0} canAdd={form.guardians<MAX_GUARDIANS} disabled={busy} onChange={v=>setForm({...form,guardians:v})}/>
             <p>未就学児・小学生と一緒に入場する保護者の人数です。</p>
           </div>}
         </div>
         <div className="confirm-values"><div className="emphasis"><span>子ども</span><strong>{total} 名</strong></div>{guardian&&<div><span>保護者</span><strong>{form.guardians} 名</strong></div>}</div>
+        {over&&<p className="round-conflict"><Hourglass size={15}/>残りは子ども {round.remaining} 名分です。{total} 名では整理券を取れないため、キャンセル待ちになります{round.waiting_count?`（いま ${round.waiting_count} 組が待っています）`:''}。</p>}
         <p className="dialog-description">{waitMode?'繰り上がったときは、「整理券を見る」の画面に整理券が表示されます。人数が多いと、空きが少ないときに繰り上がりにくくなります。':'整理券はこのスマホに保存されます。1つの回につき1枚までです。'}</p>
         <div className="dialog-buttons"><button className="button" disabled={busy} onClick={()=>setForm(null)}>戻る</button>
           <button className="button primary" disabled={busy||total<1||total>max} onClick={()=>waitMode?join({...form,round}):issue({...form,round})}>{busy?<RefreshCw size={16} className="spin"/>:waitMode?<Hourglass size={16}/>:<Users size={16}/>}{waitMode?'キャンセル待ちに登録':'整理券を取る'}</button></div>
@@ -398,6 +401,7 @@ function EventCard({ev,rounds}:{ev:EventInfo;rounds:PublicRound[]}){
     <div className="event-main">
       <h3>{ev.label}</h3>
       {ev.venue&&<p><MapPin size={14}/>{ev.venue}</p>}
+      {kindsText(ev)&&<p className="event-kinds"><Users size={14}/>対象：{kindsText(ev)}</p>}
       <p className="event-sub">{rounds.length?(next?`次の回 ${next.starts_time}（${STATUS_LABELS[next.status]}）・全 ${rounds.length} 回`:`本日の受付は終了しました・全 ${rounds.length} 回`):'回はまだ登録されていません'}</p>
       <div className="event-chips">{open>0&&<span className="status-chip status-open"><span/>受付中 {open} 回</span>}{waitable>0&&<span className="status-chip status-full"><span/>キャンセル待ち受付中</span>}</div>
     </div>
@@ -425,7 +429,7 @@ function RoundCard({r,now,owned,wait,conflict,waitConflicts,disabled,onIssue,onW
     <div className="round-head"><span className={`round-tone ${tone(r.id)}`}/><div><h3>{r.label}</h3><p>開演 <strong>{r.starts_time}</strong><small>（終演予定 {r.ends_time}）</small></p></div><span className={`status-chip status-${r.status}`}><span/>{STATUS_LABELS[r.status]}</span></div>
     <dl className="round-meta"><div><dt>受付時間</dt><dd>{r.opens_time}〜{r.closes_time}</dd></div><div><dt>残り</dt><dd className={r.remaining>0&&r.remaining<=Math.max(5,r.capacity_people*0.1)?'low':''}>{r.status==='finished'?'—':`${r.remaining} 名`}<small> / {r.capacity_people} 名</small></dd></div></dl>
     {action}
-    {r.status==='open'&&!owned&&!wait&&!conflict&&!waitBlocked&&<p className="round-sub">1枚で子ども最大 {r.max_party} 名まで申し込めます。未就学児・小学生は、保護者の方も一緒に入場できます（定員には数えません）。</p>}
+    {r.status==='open'&&!owned&&!wait&&!conflict&&!waitBlocked&&<p className="round-sub">1枚で子ども最大 {r.max_party} 名まで申し込めます。未就学児・小学生は、保護者の方も一緒に入場できます（定員には数えません）。{WAITLIST&&r.waitlist_open?`残りより多い人数のときは、キャンセル待ちに登録できます${r.waiting_count?`（いま ${r.waiting_count} 組が待っています）`:''}。`:''}</p>}
   </article>;
 }
 
@@ -450,7 +454,11 @@ function WaitCard({w,suggestions,eventOf,onLeave,onDismiss}:{w:WaitEntry;suggest
   </article>;
 }
 
-function Stepper({label,note,value,min,canAdd,disabled,onChange}:{label:string;note?:string;value:number;min:number;canAdd:boolean;disabled:boolean;onChange:(v:number)=>void}){
+function Stepper({label,note,value,min,canAdd,disabled,off,onChange}:{label:string;note?:string;value:number;min:number;canAdd:boolean;disabled:boolean;off?:boolean;onChange:(v:number)=>void}){
+  if(off)return <div className="party-row off" aria-disabled="true">
+    <span className="party-label">{label}<small>このイベントは対象外です</small></span>
+    <span className="party-off">対象外</span>
+  </div>;
   return <div className="party-row">
     <span className="party-label">{label}{note&&<small>{note}</small>}</span>
     <div className="party-control" aria-label={`${label}の人数`}><button type="button" aria-label={`${label}を1名減らす`} disabled={disabled||value<=min} onClick={()=>onChange(value-1)}><Minus size={18}/></button><span><strong>{value}</strong>名</span><button type="button" aria-label={`${label}を1名増やす`} disabled={disabled||!canAdd} onClick={()=>onChange(value+1)}><Plus size={18}/></button></div>

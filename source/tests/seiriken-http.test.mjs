@@ -132,7 +132,7 @@ test('v1のデータは、起動時に区分・保護者の列を追加して引
   try{
     const row=storage.sqlite.prepare('SELECT party_size,preschool,guardians,name FROM tickets').get();
     assert.deepEqual({...row},{party_size:2,preschool:0,guardians:0,name:''});
-    assert.equal(storage.sqlite.prepare('SELECT MAX(version) AS v FROM app_migrations').get().v,5);
+    assert.equal(storage.sqlite.prepare('SELECT MAX(version) AS v FROM app_migrations').get().v,6);
     const round=storage.sqlite.prepare('SELECT r.duration_minutes,e.label FROM rounds r JOIN events e ON e.id=r.event_id').get();
     assert.deepEqual({...round},{duration_minutes:60,label:'ステージ公演'});
     assert.throws(()=>storage.sqlite.prepare('UPDATE tickets SET guardians=3').run(),/取消以外/);
@@ -204,6 +204,25 @@ test('イベントと時間の重なり: 開演〜終演が重なる回の整理
   assert.equal((await admin(app,{action:'waitlist_on',id:a})).status,400);
   const empty=(await admin(app,{action:'event_create',label:'空'})).value.id;
   assert.equal((await admin(app,{action:'event_delete',id:empty})).status,200);
+});
+
+test('イベントの対象: 対象外の区分の子どもでは整理券を取れない',async t=>{
+  const {app}=await setup(t);
+  assert.deepEqual((await call(app.url,'api/public/state')).value.events[0].kinds,['preschool','elementary','junior_high','high_school']);
+  assert.equal((await admin(app,{action:'event_create',label:'空',kinds:[]})).status,400);
+  assert.equal((await admin(app,{action:'event_create',label:'空',kinds:['adult']})).status,400);
+  const teen=(await admin(app,{action:'event_create',label:'ボルダリング',kinds:['junior_high','high_school']})).value.id;
+  const id=await addRound(app,{eventId:teen});
+  const ev=()=>call(app.url,'api/public/state').then(r=>r.value.events.find(e=>e.id===teen));
+  assert.deepEqual((await ev()).kinds,['junior_high','high_school']);
+  const ng=await call(app.url,'api/public/issue',{roundId:id,children:{elementary:1,high_school:1},guardians:1,deviceId:randomUUID(),requestId:randomUUID()});
+  assert.equal(ng.value.code,'kinds');assert.match(ng.value.error??ng.value.message??'',/小学生/);
+  assert.equal((await issue(app,id,2)).status,200);
+  assert.equal((await admin(app,{action:'event_update',id:teen,label:'ボルダリング',venue:'',notice:''})).status,200);
+  assert.deepEqual((await ev()).kinds,['junior_high','high_school']);
+  assert.equal((await admin(app,{action:'event_update',id:teen,label:'ボルダリング',venue:'',notice:'',kinds:['elementary']})).status,200);
+  assert.deepEqual((await ev()).kinds,['elementary']);
+  assert.equal((await issue(app,id,1)).value.code,'kinds');
 });
 
 test('整理券の一覧: 「すべて」を選ぶと、すべての回の整理券を新しい順に返す',async t=>{

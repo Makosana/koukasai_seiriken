@@ -1,6 +1,6 @@
 export type RoundStatus='before'|'open'|'full'|'paused'|'closed'|'finished';
 
-export type EventInfo={id:number;label:string;venue:string;notice:string};
+export type EventInfo={id:number;label:string;venue:string;notice:string;kinds?:ChildKind[]};
 
 export type PublicRound={
   id:number;event_id:number;label:string;
@@ -30,6 +30,9 @@ export const MAX_GUARDIANS=10;
 export const emptyChildren=():Children=>({preschool:0,elementary:0,junior_high:0,high_school:0});
 export const childTotal=(c:Children)=>CHILD_KINDS.reduce((s,k)=>s+(c[k.key]??0),0);
 export const needsGuardian=(c:Children)=>WITH_GUARDIAN.some(k=>(c[k]??0)>0);
+export const eventKinds=(ev:{kinds?:ChildKind[]}|undefined):ChildKind[]=>ev?.kinds?.length?ev.kinds:CHILD_KINDS.map(k=>k.key);
+// 全区分が対象なら空文字
+export const kindsText=(ev:{kinds?:ChildKind[]}|undefined)=>{const k=eventKinds(ev);return k.length===CHILD_KINDS.length?'':CHILD_KINDS.filter(c=>k.includes(c.key)).map(c=>c.label).join('・');};
 export const childSummary=(c:Children|undefined)=>c?CHILD_KINDS.filter(k=>c[k.key]>0).map(k=>`${k.label}${c[k.key]}`).join('・'):'';
 
 export type Ticket={
